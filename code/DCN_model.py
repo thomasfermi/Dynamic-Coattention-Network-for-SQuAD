@@ -82,27 +82,22 @@ class DCN_qa_model(Qa_model):
         ############### simple decoding with rnn ###############
 
         with tf.variable_scope("decode_rnn", reuse=False):
-            cell = tf.contrib.rnn.GRUCell(1)  # TODO: maybe dim=2 and then use one as xe one as xs
+            cell = tf.contrib.rnn.GRUCell(2)  
             logits, final_state = tf.nn.dynamic_rnn(cell, inputs=u_outputs, dtype=tf.float32,
                                                     sequence_length=c_sequence_length)
 
-        logits = tf.reshape(logits, shape=[-1, self.max_c_length])
         logging.info("logits.shape={}".format(logits.shape))
+        logitsS = logits[:, :, 0]
+        logitsE = logits[:, :, 1]
+        logging.info("logitsS.shape={}".format(logitsS.shape))
+        logging.info("logitsE.shape={}".format(logitsE.shape))
 
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
-        knowledge_vector = logits * float_mask
-        logging.info("knowledge_vector={}".format(knowledge_vector))
-
-        xe = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
-        logging.info("xe.shape={}".format(xe.shape))
-
-        xs = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
-
-        logging.info("self.c_mask_placeholder.shape={}".format(self.c_mask_placeholder.shape))
-
         int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
-        xs = xs * float_mask
-        xe = xe * float_mask
+
+        xs = logitsS * float_mask
+        xe = logitsE * float_mask
+
         mls = self.labels_placeholderS * int_mask
         mle = self.labels_placeholderE * int_mask
 
