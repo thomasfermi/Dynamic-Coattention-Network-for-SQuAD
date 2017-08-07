@@ -81,23 +81,25 @@ class DCN_qa_model(Qa_model):
 
         ############### simple decoding with rnn ###############
 
-        with tf.variable_scope("decode_rnn", reuse=False):
-            cell = tf.contrib.rnn.GRUCell(2)  
-            logits, final_state = tf.nn.dynamic_rnn(cell, inputs=u_outputs, dtype=tf.float32,
-                                                    sequence_length=c_sequence_length)
+        projector = tf.get_variable(name="projector",shape=(2*rnn_size,),dtype=tf.float32,
+                                    initializer=tf.contrib.layers.xavier_initializer())
 
-        logging.info("logits.shape={}".format(logits.shape))
-        logitsS = logits[:, :, 0]
-        logitsE = logits[:, :, 1]
-        logging.info("logitsS.shape={}".format(logitsS.shape))
-        logging.info("logitsE.shape={}".format(logitsE.shape))
-
+        knowledge_vector = tf.einsum('ijk,k->ij',u_outputs,projector)
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
+        knowledge_vector = knowledge_vector * float_mask
+
+        logging.info("knowledge_vector={}".format(knowledge_vector))
+
+        xe = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
+        logging.info("xe.shape={}".format(xe.shape))
+
+        xs = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
+
+        logging.info("self.c_mask_placeholder.shape={}".format(self.c_mask_placeholder.shape))
+
         int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
-
-        xs = logitsS * float_mask
-        xe = logitsE * float_mask
-
+        xs = xs * float_mask
+        xe = xe * float_mask
         mls = self.labels_placeholderS * int_mask
         mle = self.labels_placeholderE * int_mask
 
@@ -113,5 +115,5 @@ class DCN_qa_model(Qa_model):
         loss = tf.reduce_mean(cross_entropyS) + tf.reduce_mean(cross_entropyE)
 
         logging.info("loss.shape={}".format(loss.shape))
-
         return predictionS, predictionE, loss
+
