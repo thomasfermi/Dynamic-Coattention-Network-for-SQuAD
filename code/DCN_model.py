@@ -2,6 +2,8 @@ import numpy as np
 import tensorflow as tf
 from tqdm import trange
 import logging
+import matplotlib as mpl
+mpl.use('Agg') #can run on machine without display
 import matplotlib.pyplot as plt
 import os
 
