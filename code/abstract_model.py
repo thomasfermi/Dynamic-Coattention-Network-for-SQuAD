@@ -9,11 +9,11 @@ import matplotlib.pyplot as plt
 import os
 
 
-class Simple_baseline_qa_model(object):
-    def __init__(self, max_q_length, max_c_length, data_dir):
+class Qa_model(object):
+    def __init__(self, max_q_length, max_c_length, FLAGS):
         self.max_q_length = max_q_length
         self.max_c_length = max_c_length
-        self.data_dir = data_dir + "/"
+        self.FLAGS = FLAGS
 
         self.test_preprocessing_units()
         self.load_and_preprocess_data()
@@ -62,7 +62,7 @@ class Simple_baseline_qa_model(object):
 
         logging.info("Data prep")
         # load word embedding
-        self.WordEmbeddingMatrix = np.load(self.data_dir + "glove.trimmed.100.npz")['glove']
+        self.WordEmbeddingMatrix = np.load(self.FLAGS.data_dir + "glove.trimmed.100.npz")['glove']
         logging.info("WordEmbeddingMatrix.shape={}".format(self.WordEmbeddingMatrix.shape))
         null_wordvec_index = self.WordEmbeddingMatrix.shape[0]
         # append a zero vector to WordEmbeddingMatrix, which shall be used as padding value
@@ -73,16 +73,16 @@ class Simple_baseline_qa_model(object):
         self.build_model()
 
         # load contexts, questions and labels
-        self.yS, self.yE = self.span_to_y(np.loadtxt(self.data_dir + "train.span", dtype=np.int32))
-        self.yvalS, self.yvalE = self.span_to_y(np.loadtxt(self.data_dir + "val.span", dtype=np.int32))
+        self.yS, self.yE = self.span_to_y(np.loadtxt(self.FLAGS.data_dir + "train.span", dtype=np.int32))
+        self.yvalS, self.yvalE = self.span_to_y(np.loadtxt(self.FLAGS.data_dir + "val.span", dtype=np.int32))
 
-        self.X_c, self.X_c_mask = self.read_and_pad(self.data_dir + "train.ids.context", self.max_c_length,
+        self.X_c, self.X_c_mask = self.read_and_pad(self.FLAGS.data_dir + "train.ids.context", self.max_c_length,
                                                     null_wordvec_index)
-        self.Xval_c, self.Xval_c_mask = self.read_and_pad(self.data_dir + "val.ids.context", self.max_c_length,
+        self.Xval_c, self.Xval_c_mask = self.read_and_pad(self.FLAGS.data_dir + "val.ids.context", self.max_c_length,
                                                           null_wordvec_index)
-        self.X_q, self.X_q_mask = self.read_and_pad(self.data_dir + "train.ids.question", self.max_q_length,
+        self.X_q, self.X_q_mask = self.read_and_pad(self.FLAGS.data_dir + "train.ids.question", self.max_q_length,
                                                     null_wordvec_index)
-        self.Xval_q, self.Xval_q_mask = self.read_and_pad(self.data_dir + "val.ids.question", self.max_q_length,
+        self.Xval_q, self.Xval_q_mask = self.read_and_pad(self.FLAGS.data_dir + "val.ids.question", self.max_q_length,
                                                           null_wordvec_index)
         logging.info("End data prep")
 
@@ -90,6 +90,11 @@ class Simple_baseline_qa_model(object):
     ######################## Model building ############################################################################
     ####################################################################################################################
     def build_model(self):
+        self.add_placeholders()
+        self.predictionS, self.predictionE, self.loss = self.add_prediction_and_loss()
+        self.train_op, self.global_grad_norm = self.add_training_op(self.loss)
+
+    def add_placeholders(self):
         self.q_input_placeholder = tf.placeholder(tf.int32, (None, self.max_q_length), name="q_input_ph")
         self.q_mask_placeholder = tf.placeholder(dtype=tf.bool, shape=(None, self.max_q_length),
                                                  name="q_mask_placeholder")
@@ -101,93 +106,31 @@ class Simple_baseline_qa_model(object):
 
         self.dropout_placeholder = tf.placeholder(tf.float32, name="dropout_ph")
 
-        self.WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
-                                   trainable=False)
+    def add_prediction_and_loss(self):
+        raise NotImplementedError("Each Model must re-implement this method.")
 
-        self.embedded_q = tf.nn.embedding_lookup(params=self.WEM, ids=self.q_input_placeholder)
-        self.embedded_c = tf.nn.embedding_lookup(params=self.WEM, ids=self.c_input_placeholder)
 
-        logging.info("embedded_q.shape={}".format(self.embedded_q.shape))
-        logging.info("embedded_c.shape={}".format(self.embedded_c.shape))
-        logging.info("labels_placeholderS.shape={}".format(self.labels_placeholderS.shape))
 
-        # RNN magic !
-        rnn_size = 64
-        with tf.variable_scope("rnn", reuse=None):
-            cell = tf.contrib.rnn.GRUCell(rnn_size)
-            q_sequence_length = tf.reduce_sum(tf.cast(self.q_mask_placeholder, tf.int32), axis=1)
-            q_sequence_length = tf.reshape(q_sequence_length, [-1, ])
-            c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
-            c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
-
-            q_outputs, q_final_state = tf.nn.dynamic_rnn(cell=cell, inputs=self.embedded_q,
-                                                         sequence_length=q_sequence_length, dtype=tf.float32,
-                                                         time_major=False)
-            question_rep = q_final_state
-
-        with tf.variable_scope("rnn", reuse=True):
-            c_outputs, c_final_state = tf.nn.dynamic_rnn(cell=cell, inputs=self.embedded_c,
-                                                         sequence_length=c_sequence_length,
-                                                         initial_state=question_rep,
-                                                         time_major=False)
-
-        logging.info("Everything went better than expected")
-
-        logging.info("c_outputs.shape={}".format(c_outputs.shape))
-        logging.info("q_outputs.shape={}".format(q_outputs.shape))
-        logging.info("question_rep.shape={}".format(question_rep.shape))
-
-        attention = tf.einsum('ik,ijk->ij', question_rep, c_outputs)
-        logging.info("attention.shape={}".format(attention))
-        # weighted_context = tf.einsum('ijk,ij->ijk',c_outputs, attention)
-        # logging.info("weighted_context={}".format(weighted_context))
-        # knowledge_vector = tf.reshape(weighted_context, [-1,self.max_c_length*rnn_size])
-        float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
-        knowledge_vector = attention * float_mask
-        logging.info("knowledge_vector={}".format(knowledge_vector))
-
-        xe = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
-        logging.info("xe.shape={}".format(xe.shape))
-
-        xs = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
-
-        logging.info("self.c_mask_placeholder.shape={}".format(self.c_mask_placeholder.shape))
-
-        int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
-        xs = xs * float_mask
-        xe = xe * float_mask
-        mls = self.labels_placeholderS * int_mask
-        mle = self.labels_placeholderE * int_mask
-
-        cross_entropyS = tf.nn.softmax_cross_entropy_with_logits(labels=mls, logits=xs,
-                                                                 name="cross_entropyS")
-        cross_entropyE = tf.nn.softmax_cross_entropy_with_logits(labels=mle, logits=xe,
-                                                                 name="cross_entropyE")
-        self.predictionS = tf.argmax(xs, 1)
-        self.predictionE = tf.argmax(xe, 1)
-
-        logging.info("cross_entropyE.shape={}".format(cross_entropyE.shape))
-
-        self.loss = tf.reduce_mean(cross_entropyS) + tf.reduce_mean(cross_entropyE)
-
-        logging.info("loss.shape={}".format(self.loss.shape))
-
+    def add_training_op(self, loss):
         # use adam optimizer with exponentially decaying learning rate
         # step_adam = tf.Variable(0, trainable=False)
         # rate_adam = tf.train.exponential_decay(1e-3, step_adam, 1, 0.999)  # after one epoch: 0.999**2500 = 0.1
-        rate_adam = 1e-3
+        rate_adam = self.FLAGS.learning_rate
         # hence learning rate decays by a factor of 0.1 each epoch
         optimizer = tf.train.AdamOptimizer(rate_adam)
 
-        grads_and_vars = optimizer.compute_gradients(self.loss)
+        grads_and_vars = optimizer.compute_gradients(loss)
         variables = [output[1] for output in grads_and_vars]
         gradients = [output[0] for output in grads_and_vars]
 
-        # gradients = tf.clip_by_global_norm(gradients, clip_norm=1)[0]
-        self.global_grad_norm = tf.global_norm(gradients)
+        # gradients = tf.clip_by_global_norm(gradients, clip_norm=self.FLAGS.max_gradient_norm)[0]
+        global_grad_norm = tf.global_norm(gradients)
         grads_and_vars = [(gradients[i], variables[i]) for i in range(len(gradients))]
 
-        self.train_op = optimizer.apply_gradients(grads_and_vars)
+        train_op = optimizer.apply_gradients(grads_and_vars)
+
+        return train_op, global_grad_norm
+
 
     def get_feed_dict(self, batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE):
         feed_dict = {self.c_input_placeholder: batch_xc,
@@ -361,8 +304,8 @@ class Simple_baseline_qa_model(object):
         sess.run(tf.global_variables_initializer())
         sess.run(tf.local_variables_initializer())
 
-        epochs = 8
-        batch_size = 32
+        epochs = self.FLAGS.epochs
+        batch_size = self.FLAGS.batch_size
         n_samples = len(self.yS)
         self.initialize_batch_processing(n_samples=n_samples)
 
