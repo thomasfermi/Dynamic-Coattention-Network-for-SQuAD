@@ -10,6 +10,11 @@ import os
 
 
 class Qa_model(object):
+    """This Class has all functionalities of a QuestionAnswering Model, such as preprocessing of data, evaluation 
+    metrics, batch processing, training loop etc., but it misses the heart of the model, the  add_prediction_and_loss() 
+    method, which actually defines how to go from input X to label y. The method add_prediction_and_loss() must be 
+    implemented in a derived class.
+    """
     def __init__(self, max_q_length, max_c_length, FLAGS):
         self.max_q_length = max_q_length
         self.max_c_length = max_c_length
@@ -106,9 +111,9 @@ class Qa_model(object):
 
         self.dropout_placeholder = tf.placeholder(tf.float32, name="dropout_ph")
 
+
     def add_prediction_and_loss(self):
         raise NotImplementedError("Each Model must re-implement this method.")
-
 
 
     def add_training_op(self, loss):
@@ -182,38 +187,38 @@ class Qa_model(object):
         plt.plot(epoch_axis, global_losses)
         plt.xlabel("epoch")
         plt.ylabel("loss")
-        plt.savefig("figs/training_losses_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"training_losses_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, global_EMs)
         plt.xlabel("epoch")
         plt.ylabel("EM")
-        plt.savefig("figs/training_EMs_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"training_EMs_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, global_f1s)
         plt.xlabel("epoch")
         plt.ylabel("F1")
-        plt.savefig("figs/training_f1s_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"training_f1s_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, global_grad_norms)
         plt.xlabel("epoch")
         plt.ylabel("gradient_norm")
-        plt.savefig("figs/training_grad_norms_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"training_grad_norms_over_time.png")
         plt.close()
 
     def plot_evaluation_metrics(self, EMs_val, F1s_val):
         plt.plot(EMs_val)
         plt.xlabel("epoch")
         plt.ylabel("EM_val")
-        plt.savefig("figs/EM_val_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"EM_val_over_time.png")
         plt.close()
 
         plt.plot(F1s_val)
         plt.xlabel("epoch")
         plt.ylabel("F1_val")
-        plt.savefig("figs/F1_val_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"F1_val_over_time.png")
         plt.close()
 
     ####################################################################################################################

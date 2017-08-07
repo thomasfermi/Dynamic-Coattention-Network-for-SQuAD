@@ -2,6 +2,7 @@
 # from __future__ import division
 
 import tensorflow as tf
+import os
 
 from simple_baseline_model import Simple_baseline_qa_model
 from DCN_model import DCN_qa_model
@@ -14,6 +15,7 @@ tf.app.flags.DEFINE_float("learning_rate", 0.01, "Learning rate.")
 tf.app.flags.DEFINE_integer("batch_size", 32, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 20, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("rnn_state_size", 64, "Size of RNNs used in the model.")
+tf.app.flags.DEFINE_string("figure_directory", "figs/", "Directory in which figures are stored.")
 
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
@@ -39,7 +41,10 @@ def main(_):
     # I do not use the code supplied by the CS224n staff for this main method
     # Just create a model, train it and evaluate on validation set
     # print FLAGS.learning_rate
-    # assert False
+
+    if not os.path.exists(FLAGS.figure_directory):
+        os.makedirs(FLAGS.figure_directory)
+
     if FLAGS.model == "baseline":
         model = Simple_baseline_qa_model(max_q_length=80, max_c_length=800, FLAGS=FLAGS)
     elif FLAGS.model == "DCN":

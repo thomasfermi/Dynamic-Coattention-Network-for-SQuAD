@@ -4,6 +4,18 @@ from abstract_model import Qa_model
 
 
 class Simple_baseline_qa_model(Qa_model):
+    """The idea of this model is the following:
+    1. Run question through a GRU RNN. Call the final state the question representation.
+    2. Run context through the same GRU RNN and use the question representation as initial value.
+    3. For each token in the context we obtain a vector from the above RNN. Project each of those vectors onto the 
+    question representation to obtain a knowledge vector, which consists of one float for each token in the context.
+    4. Feed the knowledge vector through two different softmaxes. This results in vectors xs and xe. Each float in xs 
+    corresponds to a token in the context and represents the probability that this token is the start of the answer. 
+    xe has a similar interpretation, just for the end of the answer.
+    5. The loss is defined via cross entropy. 
+    
+    The point of this model is to check if the general setup in abstract_model has a bug. If this simple model would 
+    not learn anything (exact_match less than 1%), there would be a bug somewhere."""
     def add_prediction_and_loss(self):
         WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
                               trainable=False)
