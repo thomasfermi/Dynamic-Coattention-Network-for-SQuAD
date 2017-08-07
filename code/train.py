@@ -102,8 +102,8 @@ def main(_):
     logging.getLogger().addHandler(file_handler)
 
     #NEW CODE
-    #model = Simple_baseline_qa_model(max_q_length=80, max_c_length=800, data_dir=FLAGS.data_dir)
-    model = DCN_qa_model(max_q_length=80, max_c_length=800, data_dir=FLAGS.data_dir)
+    model = Simple_baseline_qa_model(max_q_length=80, max_c_length=800, data_dir=FLAGS.data_dir)
+    #model = DCN_qa_model(max_q_length=80, max_c_length=800, data_dir=FLAGS.data_dir)
     model.train()
 
     #END NEW CODE
