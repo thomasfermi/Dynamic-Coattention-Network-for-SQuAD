@@ -13,7 +13,7 @@ class DCN_qa_model(Qa_model):
     def add_prediction_and_loss(self):
         coattention_context = self.encode()
         # prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
-        prediction_start, prediction_end, loss = self.decode_with_baseline_decoder2(coattention_context)
+        prediction_start, prediction_end, loss = self.decode_with_baseline_decoder3(coattention_context)
 
         return prediction_start, prediction_end, loss
 
@@ -139,6 +139,72 @@ class DCN_qa_model(Qa_model):
         int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
 
         coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
+
+        projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                          initializer=tf.contrib.layers.xavier_initializer())
+        projector_end = tf.get_variable(name="projectorE", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                        initializer=tf.contrib.layers.xavier_initializer())
+
+        prob_start = tf.einsum('ijk,k->ij', coattention_context, projector_start) * float_mask
+        prob_end = tf.einsum('ijk,k->ij', coattention_context, projector_end) * float_mask
+
+        logging.info("prob_start={}".format(prob_start))
+        prob_start = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_start)
+        prob_start = prob_start * float_mask
+        logging.info("prob_start={}".format(prob_start))
+
+        prob_end_correlated = tf.concat([prob_end, tf.nn.softmax(prob_start)], axis=1)
+        logging.info("prob_end_correlated={}".format(prob_end_correlated))
+        # prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='relu')(prob_end_correlated)
+        prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_end_correlated)
+        logging.info("prob_end_correlated={}".format(prob_end_correlated))
+
+        prob_end_correlated = prob_end_correlated * float_mask
+
+        masked_label_start = self.labels_placeholderS * int_mask
+        masked_label_end = self.labels_placeholderE * int_mask
+
+        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_start, logits=prob_start,
+                                                                      name="cross_entropy_start")
+        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_end, logits=prob_end_correlated,
+                                                                    name="cross_entropy_end")
+        prediction_start = tf.argmax(prob_start, 1)
+        prediction_end = tf.argmax(prob_end_correlated, 1)
+
+        logging.info("cross_entropy_end={}".format(cross_entropy_end))
+
+        loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
+
+        logging.info("loss.shape={}".format(loss.shape))
+        return prediction_start, prediction_end, loss
+
+    def decode_with_baseline_decoder3(self, coattention_context):
+        """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary) 
+        Advance over baseline_decoder1: First decode prob_start. Then Decode prob_end conditioned on prob_start. """
+        float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
+        int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
+
+        coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
+
+        # feed coattention context through DNN
+        def get_weight_and_bias(l):
+            l = str(l)
+            U = tf.get_variable(name="DNN_U" + l, shape=(coattention_context.shape[2], coattention_context.shape[2]),
+                                dtype=tf.float32,
+                                initializer=tf.contrib.layers.xavier_initializer())
+            b = tf.get_variable(name="DNN_b" + l, shape=(coattention_context.shape[1], coattention_context.shape[2]),
+                                dtype=tf.float32,
+                                initializer=tf.contrib.layers.xavier_initializer())
+            return U, b
+
+        nlayers = 3
+        for layer_index in range(nlayers):
+            U, b = get_weight_and_bias(layer_index)
+            coattention_context = tf.einsum('ijk,kl->ijl', coattention_context, U)
+            coattention_context = tf.nn.relu(coattention_context + b)
+            coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
+
+        # Now process as in other baseline models
 
         projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
                                           initializer=tf.contrib.layers.xavier_initializer())

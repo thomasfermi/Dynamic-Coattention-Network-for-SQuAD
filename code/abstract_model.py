@@ -318,7 +318,7 @@ class Qa_model(object):
 
         for index_epoch in range(1, epochs + 1):
             progbar = trange(int(n_samples / batch_size))
-            losses, EMs, f1s, grad_norms = [], [], [], []
+            losses, ems, f1s, grad_norms = [], [], [], []
             self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation, n_samples=n_samples)
 
             ############### train for one epoch ###############
@@ -330,47 +330,38 @@ class Qa_model(object):
                 _, current_loss, predictionS, predictionE, grad_norm = sess.run(
                     [self.train_op, self.loss, self.predictionS, self.predictionE, self.global_grad_norm],
                     feed_dict=feed_dict)
-                EMs.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
+                ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
                 f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
                 losses.append(current_loss)
                 grad_norms.append(grad_norm)
 
                 if len(losses) >= 20:
-                    progbar.set_postfix({'loss': np.mean(losses), 'EM': np.mean(EMs), 'f1': np.mean(f1s),
+                    progbar.set_postfix({'loss': np.mean(losses), 'EM': np.mean(ems), 'f1': np.mean(f1s),
                                          'grad_norm': np.mean(grad_norms)})
                     global_losses.append(np.mean(losses))
-                    global_EMs.append(np.mean(EMs))
+                    global_EMs.append(np.mean(ems))
                     global_f1s.append(np.mean(f1s))
                     global_grad_norms.append(np.mean(grad_norms))
-                    losses, EMs, f1s, grad_norms = [], [], [], []
+                    losses, ems, f1s, grad_norms = [], [], [], []
 
             ############### After an epoch: evaluate on validation set ###############
             logging.info("Epoch {} finished. Doing evaluation on validation set...".format(index_epoch))
-            # TODO: dissect validation set into batches. Otherwise we might run into OutOfMemory errors
-            # TODO: the above is done. but the code is super ugly. make this pretty!
             self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation,
                                              n_samples=len(self.yvalE))
-            progbar = trange(int(len(self.yvalE) / batch_size))
-            lov, ps, pe = [], [], []
-            for _ in progbar:
+            val_batch_size = 4*batch_size #let's hope we don't run out of memory ;)
+            losses, ems, f1s = [], [], []
+            for _ in range(int(len(self.yvalE) / val_batch_size)):
                 batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE = self.next_batch(
-                    batch_size=batch_size, permutation_after_epoch=self.FLAGS.batch_permutation, val=True)
+                    batch_size=val_batch_size, permutation_after_epoch=self.FLAGS.batch_permutation, val=True)
                 feed_dict = self.get_feed_dict(batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS,
                                                batch_yE, 1)
-                loss_on_validation, predictionS, predictionE = sess.run(
-                    [self.loss, self.predictionS, self.predictionE],
-                    feed_dict=feed_dict)
-                lov.append(loss_on_validation)
-                ps.append(predictionS)
-                pe.append(predictionE)
+                current_loss, predictionS, predictionE = sess.run([self.loss, self.predictionS, self.predictionE],
+                                                                  feed_dict=feed_dict)
+                ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
+                f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
+                losses.append(current_loss)
 
-            loss_on_validation = np.mean(lov)
-            predictionS = np.reshape(ps, [ps.shape[0] * ps.shape[1], ps.shape[2]])
-            predictionE = np.reshape(pe, [pe.shape[0] * pe.shape[1], pe.shape[2]])
-
-            EM_val = self.get_exact_match(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
-            F1_val = self.get_f1(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
-
+            loss_on_validation, EM_val, F1_val = np.mean(losses), np.mean(ems), np.mean(f1s)
             logging.info("loss_val={}".format(loss_on_validation))
             logging.info("EM_val={}".format(EM_val))
             logging.info("F1_val={}".format(F1_val))
