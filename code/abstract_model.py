@@ -15,6 +15,7 @@ class Qa_model(object):
     method, which actually defines how to go from input X to label y. The method add_prediction_and_loss() must be 
     implemented in a derived class.
     """
+
     def __init__(self, max_q_length, max_c_length, FLAGS):
         self.max_q_length = max_q_length
         self.max_c_length = max_c_length
@@ -111,10 +112,8 @@ class Qa_model(object):
 
         self.dropout_placeholder = tf.placeholder(tf.float32, name="dropout_ph")
 
-
     def add_prediction_and_loss(self):
         raise NotImplementedError("Each Model must re-implement this method.")
-
 
     def add_training_op(self, loss):
         # use adam optimizer with exponentially decaying learning rate
@@ -136,14 +135,14 @@ class Qa_model(object):
 
         return train_op, global_grad_norm
 
-
-    def get_feed_dict(self, batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE):
+    def get_feed_dict(self, batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE, keep_prob):
         feed_dict = {self.c_input_placeholder: batch_xc,
                      self.c_mask_placeholder: batch_xc_mask,
                      self.q_input_placeholder: batch_xq,
                      self.q_mask_placeholder: batch_xq_mask,
                      self.labels_placeholderS: batch_yS,
-                     self.labels_placeholderE: batch_yE}
+                     self.labels_placeholderE: batch_yE,
+                     self.dropout_placeholder: keep_prob}
         return feed_dict
 
     ####################################################################################################################
@@ -188,40 +187,43 @@ class Qa_model(object):
         epoch_axis = np.arange(n_data_points, dtype=np.float32) * index_epoch / float(n_data_points)
         epoch_axis_val = np.arange(index_epoch) + 1
 
-        plt.plot(epoch_axis, losses)
-        plt.plot(epoch_axis_val, val_losses)
+        plt.plot(epoch_axis, losses, label="training")
+        plt.plot(epoch_axis_val, val_losses, label="validation")
         plt.xlabel("epoch")
         plt.ylabel("loss")
-        plt.savefig(self.FLAGS.figure_directory+"losses_over_time.png")
+        plt.legend()
+        plt.savefig(self.FLAGS.figure_directory + "losses_over_time.png")
         plt.close()
 
-        plt.plot(epoch_axis, EMs)
-        plt.plot(epoch_axis_val, val_Ems)
+        plt.plot(epoch_axis, EMs, label="training")
+        plt.plot(epoch_axis_val, val_Ems, label="validation")
         plt.xlabel("epoch")
         plt.ylabel("EM")
-        plt.savefig(self.FLAGS.figure_directory+"EMs_over_time.png")
+        plt.legend()
+        plt.savefig(self.FLAGS.figure_directory + "EMs_over_time.png")
         plt.close()
 
-        plt.plot(epoch_axis, F1s)
-        plt.plot(epoch_axis_val, val_F1s)
+        plt.plot(epoch_axis, F1s, label="training")
+        plt.plot(epoch_axis_val, val_F1s, label="validation")
         plt.xlabel("epoch")
         plt.ylabel("F1")
-        plt.savefig(self.FLAGS.figure_directory+"f1s_over_time.png")
+        plt.legend()
+        plt.savefig(self.FLAGS.figure_directory + "f1s_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, grad_norms)
         plt.xlabel("epoch")
         plt.ylabel("gradient_norm")
-        plt.savefig(self.FLAGS.figure_directory+"training_grad_norms_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory + "training_grad_norms_over_time.png")
         plt.close()
-
 
     ####################################################################################################################
     ######################## Batch processing ##########################################################################
     ####################################################################################################################
-    def initialize_batch_processing(self, n_samples, permutation=None):
+    def initialize_batch_processing(self, permutation='None', n_samples=None):
         self.batch_index = 0
-        self.max_batch_index = n_samples
+        if n_samples is not None:
+            self.max_batch_index = n_samples
         if permutation == 'by_length':
             # sum over True/False gives number of words in each sample
             length_of_each_context_paragraph = np.sum(self.X_c_mask, axis=1)
@@ -229,13 +231,15 @@ class Qa_model(object):
             self.batch_permutation = np.argsort(length_of_each_context_paragraph)
         elif permutation == 'random':
             self.batch_permutation = np.random.permutation(self.max_batch_index)  # random initial permutation
-        else:  # no permutation
+        elif (permutation == 'None' or permutation is None):  # no permutation
             self.batch_permutation = np.arange(self.max_batch_index)  # initial permutation = identity
+        else:
+            raise ValueError("permutation must be 'by_length', 'random' or 'None'")
 
-    def next_batch(self, batch_size):
+    def next_batch(self, batch_size, permutation_after_epoch='None'):
         if self.batch_index >= self.max_batch_index:
-            self.batch_index = 0
-            self.batch_permutation = np.random.permutation(self.max_batch_index)
+            # we went through one epoch. reset batch_index and initialize batch_permutation
+            self.initialize_batch_processing(permutation=permutation_after_epoch)
 
         start = self.batch_index
         end = self.batch_index + batch_size
@@ -246,13 +250,6 @@ class Qa_model(object):
         Xqmaskres = self.X_q_mask[self.batch_permutation[start:end]]
         yresS = self.yS[self.batch_permutation[start:end]]
         yresE = self.yE[self.batch_permutation[start:end]]
-
-        # Xcres = self.X_c[start:end]
-        # Xcmaskres = self.X_c_mask[start:end]
-        # Xqres = self.X_q[start:end]
-        # Xqmaskres = self.X_q_mask[start:end]
-        # yresS = self.yS[start:end]
-        # yresE = self.yE[start:end]
 
         self.batch_index += batch_size
         return Xcres, Xcmaskres, Xqres, Xqmaskres, yresS, yresE
@@ -307,7 +304,7 @@ class Qa_model(object):
         epochs = self.FLAGS.epochs
         batch_size = self.FLAGS.batch_size
         n_samples = len(self.yS)
-        self.initialize_batch_processing(n_samples=n_samples)
+        self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation, n_samples=n_samples)
 
         global_losses, global_EMs, global_f1s, global_grad_norms = [], [], [], []  # global means "over several epochs"
         EMs_val, F1s_val, loss_val = [], [], []  # exact_match- and F1-metrics as well as loss on the validation data
@@ -319,8 +316,9 @@ class Qa_model(object):
             ############### train for one epoch ###############
             for _ in progbar:
                 batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE = self.next_batch(
-                    batch_size=batch_size)
-                feed_dict = self.get_feed_dict(batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE)
+                    batch_size=batch_size, permutation_after_epoch=self.FLAGS.batch_permutation)
+                feed_dict = self.get_feed_dict(batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE,
+                                               self.FLAGS.dropout)
                 _, current_loss, predictionS, predictionE, grad_norm = sess.run(
                     [self.train_op, self.loss, self.predictionS, self.predictionE, self.global_grad_norm],
                     feed_dict=feed_dict)
@@ -340,10 +338,11 @@ class Qa_model(object):
 
             ############### After an epoch: evaluate on validation set ###############
             logging.info("Epoch {} finished. Doing evaluation on validation set...".format(index_epoch))
+            # TODO: dissect validation set into batches. Otherwise we might run into OutOfMemory errors
             feed_dict = self.get_feed_dict(self.Xval_c, self.Xval_c_mask, self.Xval_q, self.Xval_q_mask, self.yvalS,
-                                           self.yvalE)
+                                           self.yvalE, 1)
             loss_on_validation, predictionS, predictionE = sess.run([self.loss, self.predictionS, self.predictionE],
-                                                          feed_dict=feed_dict)
+                                                                    feed_dict=feed_dict)
 
             EM_val = self.get_exact_match(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
             F1_val = self.get_f1(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
@@ -356,6 +355,6 @@ class Qa_model(object):
             loss_val.append(loss_on_validation)
 
             ############### do some plotting ###############
-            if index_epoch>1:
+            if index_epoch > 1:
                 self.plot_metrics(index_epoch, global_losses, loss_val, global_EMs, EMs_val, global_f1s, F1s_val,
                                   global_grad_norms)

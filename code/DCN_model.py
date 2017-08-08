@@ -12,7 +12,7 @@ class DCN_qa_model(Qa_model):
 
     def add_prediction_and_loss(self):
         coattention_context = self.encode()
-        #prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
+        # prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
         prediction_start, prediction_end, loss = self.decode_with_baseline_decoder2(coattention_context)
 
         return prediction_start, prediction_end, loss
@@ -119,9 +119,9 @@ class DCN_qa_model(Qa_model):
         mle = self.labels_placeholderE * int_mask
 
         cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=mls, logits=xs,
-                                                                 name="cross_entropy_start")
+                                                                      name="cross_entropy_start")
         cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=mle, logits=xe,
-                                                                 name="cross_entropy_end")
+                                                                    name="cross_entropy_end")
         prediction_start = tf.argmax(xs, 1)
         prediction_end = tf.argmax(xe, 1)
 
@@ -138,34 +138,36 @@ class DCN_qa_model(Qa_model):
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
 
-        projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
-                                    initializer=tf.contrib.layers.xavier_initializer())
-        projector_end = tf.get_variable(name="projectorE", shape=(coattention_context.shape[2],), dtype=tf.float32,
-                                     initializer=tf.contrib.layers.xavier_initializer())
+        coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
 
-        prob_start = tf.einsum('ijk,k->ij', coattention_context, projector_start)*float_mask
-        prob_end = tf.einsum('ijk,k->ij', coattention_context, projector_end)*float_mask
+        projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                          initializer=tf.contrib.layers.xavier_initializer())
+        projector_end = tf.get_variable(name="projectorE", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                        initializer=tf.contrib.layers.xavier_initializer())
+
+        prob_start = tf.einsum('ijk,k->ij', coattention_context, projector_start) * float_mask
+        prob_end = tf.einsum('ijk,k->ij', coattention_context, projector_end) * float_mask
 
         logging.info("prob_start={}".format(prob_start))
         prob_start = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_start)
+        prob_start = prob_start * float_mask
         logging.info("prob_start={}".format(prob_start))
 
-        prob_end_correlated = tf.concat([prob_end, prob_start], axis=1)
+        prob_end_correlated = tf.concat([prob_end, tf.nn.softmax(prob_start)], axis=1)
         logging.info("prob_end_correlated={}".format(prob_end_correlated))
-        prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='relu')(prob_end_correlated)
+        # prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='relu')(prob_end_correlated)
         prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_end_correlated)
         logging.info("prob_end_correlated={}".format(prob_end_correlated))
 
-        prob_start = prob_start * float_mask
         prob_end_correlated = prob_end_correlated * float_mask
 
         masked_label_start = self.labels_placeholderS * int_mask
         masked_label_end = self.labels_placeholderE * int_mask
 
         cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_start, logits=prob_start,
-                                                                 name="cross_entropy_start")
+                                                                      name="cross_entropy_start")
         cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_end, logits=prob_end_correlated,
-                                                                 name="cross_entropy_end")
+                                                                    name="cross_entropy_end")
         prediction_start = tf.argmax(prob_start, 1)
         prediction_end = tf.argmax(prob_end_correlated, 1)
 
