@@ -151,6 +151,7 @@ class DCN_qa_model(Qa_model):
         logging.info("prob_start={}".format(prob_start))
         prob_start = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_start)
         prob_start = prob_start * float_mask
+        #TODO: float_mask problematic: value 0 becomes exp(0)=1 after softmax. Maybe it should be -1e10 or something
         logging.info("prob_start={}".format(prob_start))
 
         prob_end_correlated = tf.concat([prob_end, tf.nn.softmax(prob_start)], axis=1)
@@ -184,58 +185,43 @@ class DCN_qa_model(Qa_model):
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
 
-        coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
 
-        # feed coattention context through DNN
-        def get_weight_and_bias(l):
-            l = str(l)
-            U = tf.get_variable(name="DNN_U" + l, shape=(coattention_context.shape[2], coattention_context.shape[2]),
-                                dtype=tf.float32,
-                                initializer=tf.contrib.layers.xavier_initializer())
-            b = tf.get_variable(name="DNN_b" + l, shape=(coattention_context.shape[1], coattention_context.shape[2]),
-                                dtype=tf.float32,
-                                initializer=tf.contrib.layers.xavier_initializer())
-            return U, b
+        with tf.variable_scope("decoder_rnn_start", reuse=False):
+            start_cell = tf.contrib.rnn.GRUCell(self.max_c_length)
+            c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
+            c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
+            _, prob_start = tf.nn.dynamic_rnn(cell=start_cell, inputs=coattention_context,
+                                                         sequence_length=c_sequence_length,
+                                                         dtype=tf.float32,
+                                                         time_major=False)
 
-        nlayers = 3
-        for layer_index in range(nlayers):
-            U, b = get_weight_and_bias(layer_index)
-            coattention_context = tf.einsum('ijk,kl->ijl', coattention_context, U)
-            coattention_context = tf.nn.relu(coattention_context + b)
-            coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
+        with tf.variable_scope("decoder_rnn_end", reuse=False):
+            end_cell = tf.contrib.rnn.GRUCell(self.max_c_length)
 
-        # Now process as in other baseline models
+            _, prob_end = tf.nn.dynamic_rnn(cell=end_cell, inputs=coattention_context,
+                                                        sequence_length=c_sequence_length,
+                                                        initial_state=prob_start,
+                                                        time_major=False)
 
-        projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
-                                          initializer=tf.contrib.layers.xavier_initializer())
-        projector_end = tf.get_variable(name="projectorE", shape=(coattention_context.shape[2],), dtype=tf.float32,
-                                        initializer=tf.contrib.layers.xavier_initializer())
-
-        prob_start = tf.einsum('ijk,k->ij', coattention_context, projector_start) * float_mask
-        prob_end = tf.einsum('ijk,k->ij', coattention_context, projector_end) * float_mask
 
         logging.info("prob_start={}".format(prob_start))
         prob_start = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_start)
         prob_start = prob_start * float_mask
         logging.info("prob_start={}".format(prob_start))
+        prob_end = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_end)
+        logging.info("prob_end={}".format(prob_end))
 
-        prob_end_correlated = tf.concat([prob_end, tf.nn.softmax(prob_start)], axis=1)
-        logging.info("prob_end_correlated={}".format(prob_end_correlated))
-        # prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='relu')(prob_end_correlated)
-        prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_end_correlated)
-        logging.info("prob_end_correlated={}".format(prob_end_correlated))
-
-        prob_end_correlated = prob_end_correlated * float_mask
+        prob_end = prob_end * float_mask
 
         masked_label_start = self.labels_placeholderS * int_mask
         masked_label_end = self.labels_placeholderE * int_mask
 
         cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_start, logits=prob_start,
                                                                       name="cross_entropy_start")
-        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_end, logits=prob_end_correlated,
+        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_end, logits=prob_end,
                                                                     name="cross_entropy_end")
         prediction_start = tf.argmax(prob_start, 1)
-        prediction_end = tf.argmax(prob_end_correlated, 1)
+        prediction_end = tf.argmax(prob_end, 1)
 
         logging.info("cross_entropy_end={}".format(cross_entropy_end))
 

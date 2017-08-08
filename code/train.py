@@ -50,9 +50,9 @@ def main(_):
         os.makedirs(FLAGS.figure_directory)
 
     if FLAGS.model == "baseline":
-        model = Simple_baseline_qa_model(max_q_length=80, max_c_length=800, FLAGS=FLAGS)
+        model = Simple_baseline_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
     elif FLAGS.model == "DCN":
-        model = DCN_qa_model(max_q_length=80, max_c_length=800, FLAGS=FLAGS)
+        model = DCN_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
     else:
         raise ValueError("model must be either 'baseline' or 'DCN'")
     model.train()
