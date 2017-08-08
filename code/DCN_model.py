@@ -4,6 +4,11 @@ from abstract_model import Qa_model
 
 
 class DCN_qa_model(Qa_model):
+    """This is an implementation of the Dynamic Coattention Network model (https://arxiv.org/abs/1611.01604).
+    It is work in progress. Right now, a simplified DCN encoder is implemented, which uses GRU instead of LSTMs and 
+    doesn't use sentinel vectors yet. A simple baseline decoder is applied, which justs projects the coattention 
+    context (result of encoder) down to a vector of length context_length, the 'knowledge vector'. This knowledge 
+    vector is feed through two different softmax layers to predicts the start_id and end_id of the answer."""
     def add_prediction_and_loss(self):
         self.WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
                                    trainable=False)
@@ -74,17 +79,16 @@ class DCN_qa_model(Qa_model):
 
         with tf.variable_scope("u_rnn", reuse=False):
             cell = tf.contrib.rnn.GRUCell(2 * rnn_size)
-            u_outputs, u_state = tf.nn.dynamic_rnn(cell, inputs=CDprime, dtype=tf.float32,
+            coattention_context, _ = tf.nn.dynamic_rnn(cell, inputs=CDprime, dtype=tf.float32,
                                                    sequence_length=c_sequence_length)
 
-        logging.info("u_outputs.shape={}".format(u_outputs.shape))
+        logging.info("coattention_context.shape={}".format(coattention_context.shape))
 
-        ############### simple decoding with rnn ###############
-
+        ############### simple decoding by projection ###############
         projector = tf.get_variable(name="projector",shape=(2*rnn_size,),dtype=tf.float32,
                                     initializer=tf.contrib.layers.xavier_initializer())
 
-        knowledge_vector = tf.einsum('ijk,k->ij',u_outputs,projector)
+        knowledge_vector = tf.einsum('ijk,k->ij',coattention_context,projector)
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         knowledge_vector = knowledge_vector * float_mask
 

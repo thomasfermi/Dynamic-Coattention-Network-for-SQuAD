@@ -183,39 +183,43 @@ class Qa_model(object):
         match_fraction = count / float(len(yS))
         return match_fraction
 
-    def plot_metrics(self, epoch_axis, global_losses, global_EMs, global_f1s, global_grad_norms):
-        plt.plot(epoch_axis, global_losses)
+    def plot_metrics(self, index_epoch, losses, EMs, F1s, grad_norms):
+        n_data_points = len(losses)
+        epoch_axis = np.arange(n_data_points, dtype=np.float32) * index_epoch / float(n_data_points)
+
+        plt.plot(epoch_axis, losses)
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.savefig(self.FLAGS.figure_directory+"training_losses_over_time.png")
         plt.close()
 
-        plt.plot(epoch_axis, global_EMs)
+        plt.plot(epoch_axis, EMs)
         plt.xlabel("epoch")
         plt.ylabel("EM")
         plt.savefig(self.FLAGS.figure_directory+"training_EMs_over_time.png")
         plt.close()
 
-        plt.plot(epoch_axis, global_f1s)
+        plt.plot(epoch_axis, F1s)
         plt.xlabel("epoch")
         plt.ylabel("F1")
         plt.savefig(self.FLAGS.figure_directory+"training_f1s_over_time.png")
         plt.close()
 
-        plt.plot(epoch_axis, global_grad_norms)
+        plt.plot(epoch_axis, grad_norms)
         plt.xlabel("epoch")
         plt.ylabel("gradient_norm")
         plt.savefig(self.FLAGS.figure_directory+"training_grad_norms_over_time.png")
         plt.close()
 
-    def plot_evaluation_metrics(self, EMs_val, F1s_val):
-        plt.plot(EMs_val)
+    def plot_evaluation_metrics(self, index_epoch, EMs_val, F1s_val):
+        epoch_axis=np.arange(index_epoch)+1
+        plt.plot(epoch_axis, EMs_val)
         plt.xlabel("epoch")
         plt.ylabel("EM_val")
         plt.savefig(self.FLAGS.figure_directory+"EM_val_over_time.png")
         plt.close()
 
-        plt.plot(F1s_val)
+        plt.plot(epoch_axis, F1s_val)
         plt.xlabel("epoch")
         plt.ylabel("F1_val")
         plt.savefig(self.FLAGS.figure_directory+"F1_val_over_time.png")
@@ -359,9 +363,7 @@ class Qa_model(object):
             F1s_val.append(F1_val)
 
             ############### do some plotting ###############
-            n_data_points = len(global_losses)
-            epoch_axis = np.arange(n_data_points, dtype=np.float32) * index_epoch / float(n_data_points)
-            self.plot_metrics(epoch_axis, global_losses, global_EMs, global_f1s, global_grad_norms)
+            self.plot_metrics(index_epoch, global_losses, global_EMs, global_f1s, global_grad_norms)
+            if index_epoch>1:
+                self.plot_evaluation_metrics(index_epoch,EMs_val, F1s_val)
 
-        # after all epochs have finished. plot the evaluation metrics
-        self.plot_evaluation_metrics(EMs_val, F1s_val)

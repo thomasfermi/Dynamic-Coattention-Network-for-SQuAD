@@ -3,6 +3,7 @@
 
 import tensorflow as tf
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from simple_baseline_model import Simple_baseline_qa_model
 from DCN_model import DCN_qa_model
