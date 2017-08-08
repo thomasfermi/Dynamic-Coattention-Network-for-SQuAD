@@ -183,26 +183,30 @@ class Qa_model(object):
         match_fraction = count / float(len(yS))
         return match_fraction
 
-    def plot_metrics(self, index_epoch, losses, EMs, F1s, grad_norms):
+    def plot_metrics(self, index_epoch, losses, val_losses, EMs, val_Ems, F1s, val_F1s, grad_norms):
         n_data_points = len(losses)
         epoch_axis = np.arange(n_data_points, dtype=np.float32) * index_epoch / float(n_data_points)
+        epoch_axis_val = np.arange(index_epoch) + 1
 
         plt.plot(epoch_axis, losses)
+        plt.plot(epoch_axis_val, val_losses)
         plt.xlabel("epoch")
         plt.ylabel("loss")
-        plt.savefig(self.FLAGS.figure_directory+"training_losses_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"losses_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, EMs)
+        plt.plot(epoch_axis_val, val_Ems)
         plt.xlabel("epoch")
         plt.ylabel("EM")
-        plt.savefig(self.FLAGS.figure_directory+"training_EMs_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"EMs_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, F1s)
+        plt.plot(epoch_axis_val, val_F1s)
         plt.xlabel("epoch")
         plt.ylabel("F1")
-        plt.savefig(self.FLAGS.figure_directory+"training_f1s_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory+"f1s_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, grad_norms)
@@ -211,19 +215,6 @@ class Qa_model(object):
         plt.savefig(self.FLAGS.figure_directory+"training_grad_norms_over_time.png")
         plt.close()
 
-    def plot_evaluation_metrics(self, index_epoch, EMs_val, F1s_val):
-        epoch_axis=np.arange(index_epoch)+1
-        plt.plot(epoch_axis, EMs_val)
-        plt.xlabel("epoch")
-        plt.ylabel("EM_val")
-        plt.savefig(self.FLAGS.figure_directory+"EM_val_over_time.png")
-        plt.close()
-
-        plt.plot(epoch_axis, F1s_val)
-        plt.xlabel("epoch")
-        plt.ylabel("F1_val")
-        plt.savefig(self.FLAGS.figure_directory+"F1_val_over_time.png")
-        plt.close()
 
     ####################################################################################################################
     ######################## Batch processing ##########################################################################
@@ -319,7 +310,7 @@ class Qa_model(object):
         self.initialize_batch_processing(n_samples=n_samples)
 
         global_losses, global_EMs, global_f1s, global_grad_norms = [], [], [], []  # global means "over several epochs"
-        EMs_val, F1s_val = [], []  # exact_match- and F1-metrics on the validation data
+        EMs_val, F1s_val, loss_val = [], [], []  # exact_match- and F1-metrics as well as loss on the validation data
 
         for index_epoch in range(1, epochs + 1):
             progbar = trange(int(n_samples / batch_size))
@@ -351,19 +342,20 @@ class Qa_model(object):
             logging.info("Epoch {} finished. Doing evaluation on validation set...".format(index_epoch))
             feed_dict = self.get_feed_dict(self.Xval_c, self.Xval_c_mask, self.Xval_q, self.Xval_q_mask, self.yvalS,
                                            self.yvalE)
-            val_loss, predictionS, predictionE = sess.run([self.loss, self.predictionS, self.predictionE],
+            loss_on_validation, predictionS, predictionE = sess.run([self.loss, self.predictionS, self.predictionE],
                                                           feed_dict=feed_dict)
 
             EM_val = self.get_exact_match(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
             F1_val = self.get_f1(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
 
+            logging.info("loss_val={}".format(loss_on_validation))
             logging.info("EM_val={}".format(EM_val))
             logging.info("F1_val={}".format(F1_val))
             EMs_val.append(EM_val)
             F1s_val.append(F1_val)
+            loss_val.append(loss_on_validation)
 
             ############### do some plotting ###############
-            self.plot_metrics(index_epoch, global_losses, global_EMs, global_f1s, global_grad_norms)
             if index_epoch>1:
-                self.plot_evaluation_metrics(index_epoch,EMs_val, F1s_val)
-
+                self.plot_metrics(index_epoch, global_losses, loss_val, global_EMs, EMs_val, global_f1s, F1s_val,
+                                  global_grad_norms)

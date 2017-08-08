@@ -6,10 +6,18 @@ from abstract_model import Qa_model
 class DCN_qa_model(Qa_model):
     """This is an implementation of the Dynamic Coattention Network model (https://arxiv.org/abs/1611.01604).
     It is work in progress. Right now, a simplified DCN encoder is implemented, which uses GRU instead of LSTMs and 
-    doesn't use sentinel vectors yet. A simple baseline decoder is applied, which justs projects the coattention 
-    context (result of encoder) down to a vector of length context_length, the 'knowledge vector'. This knowledge 
-    vector is feed through two different softmax layers to predicts the start_id and end_id of the answer."""
+    doesn't use sentinel vectors yet. 
+    Instead of a decoder from the above paper, there are two very simple baseline decoders implemented.
+    """
+
     def add_prediction_and_loss(self):
+        coattention_context = self.encode()
+        #prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
+        prediction_start, prediction_end, loss = self.decode_with_baseline_decoder2(coattention_context)
+
+        return prediction_start, prediction_end, loss
+
+    def encode(self):
         self.WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
                                    trainable=False)
 
@@ -31,7 +39,6 @@ class DCN_qa_model(Qa_model):
             q_outputs, q_final_state = tf.nn.dynamic_rnn(cell=cell, inputs=self.embedded_q,
                                                          sequence_length=q_sequence_length, dtype=tf.float32,
                                                          time_major=False)
-            question_rep = q_final_state
 
         Qprime = q_outputs
         Qprime = tf.transpose(Qprime, [0, 2, 1], name="Qprime")
@@ -80,15 +87,19 @@ class DCN_qa_model(Qa_model):
         with tf.variable_scope("u_rnn", reuse=False):
             cell = tf.contrib.rnn.GRUCell(2 * rnn_size)
             coattention_context, _ = tf.nn.dynamic_rnn(cell, inputs=CDprime, dtype=tf.float32,
-                                                   sequence_length=c_sequence_length)
+                                                       sequence_length=c_sequence_length)
 
         logging.info("coattention_context.shape={}".format(coattention_context.shape))
 
-        ############### simple decoding by projection ###############
-        projector = tf.get_variable(name="projector",shape=(2*rnn_size,),dtype=tf.float32,
+        return coattention_context
+
+    def decode_with_baseline_decoder1(self, coattention_context):
+        """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary) 
+        Decoding is done by a simple projection. """
+        projector = tf.get_variable(name="projector", shape=(coattention_context.shape[2],), dtype=tf.float32,
                                     initializer=tf.contrib.layers.xavier_initializer())
 
-        knowledge_vector = tf.einsum('ijk,k->ij',coattention_context,projector)
+        knowledge_vector = tf.einsum('ijk,k->ij', coattention_context, projector)
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         knowledge_vector = knowledge_vector * float_mask
 
@@ -107,17 +118,60 @@ class DCN_qa_model(Qa_model):
         mls = self.labels_placeholderS * int_mask
         mle = self.labels_placeholderE * int_mask
 
-        cross_entropyS = tf.nn.softmax_cross_entropy_with_logits(labels=mls, logits=xs,
-                                                                 name="cross_entropyS")
-        cross_entropyE = tf.nn.softmax_cross_entropy_with_logits(labels=mle, logits=xe,
-                                                                 name="cross_entropyE")
-        predictionS = tf.argmax(xs, 1)
-        predictionE = tf.argmax(xe, 1)
+        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=mls, logits=xs,
+                                                                 name="cross_entropy_start")
+        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=mle, logits=xe,
+                                                                 name="cross_entropy_end")
+        prediction_start = tf.argmax(xs, 1)
+        prediction_end = tf.argmax(xe, 1)
 
-        logging.info("cross_entropyE.shape={}".format(cross_entropyE.shape))
+        logging.info("cross_entropy_end.shape={}".format(cross_entropy_end.shape))
 
-        loss = tf.reduce_mean(cross_entropyS) + tf.reduce_mean(cross_entropyE)
+        loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
 
         logging.info("loss.shape={}".format(loss.shape))
-        return predictionS, predictionE, loss
+        return prediction_start, prediction_end, loss
 
+    def decode_with_baseline_decoder2(self, coattention_context):
+        """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary) 
+        Advance over baseline_decoder1: First decode prob_start. Then Decode prob_end conditioned on prob_start. """
+        float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
+        int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
+
+        projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                    initializer=tf.contrib.layers.xavier_initializer())
+        projector_end = tf.get_variable(name="projectorE", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                     initializer=tf.contrib.layers.xavier_initializer())
+
+        prob_start = tf.einsum('ijk,k->ij', coattention_context, projector_start)*float_mask
+        prob_end = tf.einsum('ijk,k->ij', coattention_context, projector_end)*float_mask
+
+        logging.info("prob_start={}".format(prob_start))
+        prob_start = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_start)
+        logging.info("prob_start={}".format(prob_start))
+
+        prob_end_correlated = tf.concat([prob_end, prob_start], axis=1)
+        logging.info("prob_end_correlated={}".format(prob_end_correlated))
+        prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='relu')(prob_end_correlated)
+        prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_end_correlated)
+        logging.info("prob_end_correlated={}".format(prob_end_correlated))
+
+        prob_start = prob_start * float_mask
+        prob_end_correlated = prob_end_correlated * float_mask
+
+        masked_label_start = self.labels_placeholderS * int_mask
+        masked_label_end = self.labels_placeholderE * int_mask
+
+        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_start, logits=prob_start,
+                                                                 name="cross_entropy_start")
+        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_end, logits=prob_end_correlated,
+                                                                 name="cross_entropy_end")
+        prediction_start = tf.argmax(prob_start, 1)
+        prediction_end = tf.argmax(prob_end_correlated, 1)
+
+        logging.info("cross_entropy_end={}".format(cross_entropy_end))
+
+        loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
+
+        logging.info("loss.shape={}".format(loss.shape))
+        return prediction_start, prediction_end, loss
