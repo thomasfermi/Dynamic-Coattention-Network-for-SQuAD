@@ -236,7 +236,7 @@ class Qa_model(object):
         else:
             raise ValueError("permutation must be 'by_length', 'random' or 'None'")
 
-    def next_batch(self, batch_size, permutation_after_epoch='None'):
+    def next_batch(self, batch_size, permutation_after_epoch='None', val=False):
         if self.batch_index >= self.max_batch_index:
             # we went through one epoch. reset batch_index and initialize batch_permutation
             self.initialize_batch_processing(permutation=permutation_after_epoch)
@@ -244,12 +244,20 @@ class Qa_model(object):
         start = self.batch_index
         end = self.batch_index + batch_size
 
-        Xcres = self.X_c[self.batch_permutation[start:end]]
-        Xcmaskres = self.X_c_mask[self.batch_permutation[start:end]]
-        Xqres = self.X_q[self.batch_permutation[start:end]]
-        Xqmaskres = self.X_q_mask[self.batch_permutation[start:end]]
-        yresS = self.yS[self.batch_permutation[start:end]]
-        yresE = self.yE[self.batch_permutation[start:end]]
+        if not val:
+            Xcres = self.X_c[self.batch_permutation[start:end]]
+            Xcmaskres = self.X_c_mask[self.batch_permutation[start:end]]
+            Xqres = self.X_q[self.batch_permutation[start:end]]
+            Xqmaskres = self.X_q_mask[self.batch_permutation[start:end]]
+            yresS = self.yS[self.batch_permutation[start:end]]
+            yresE = self.yE[self.batch_permutation[start:end]]
+        else:
+            Xcres = self.Xval_c[self.batch_permutation[start:end]]
+            Xcmaskres = self.Xval_c_mask[self.batch_permutation[start:end]]
+            Xqres = self.Xval_q[self.batch_permutation[start:end]]
+            Xqmaskres = self.Xval_q_mask[self.batch_permutation[start:end]]
+            yresS = self.yvalS[self.batch_permutation[start:end]]
+            yresE = self.yvalE[self.batch_permutation[start:end]]
 
         self.batch_index += batch_size
         return Xcres, Xcmaskres, Xqres, Xqmaskres, yresS, yresE
@@ -304,7 +312,6 @@ class Qa_model(object):
         epochs = self.FLAGS.epochs
         batch_size = self.FLAGS.batch_size
         n_samples = len(self.yS)
-        self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation, n_samples=n_samples)
 
         global_losses, global_EMs, global_f1s, global_grad_norms = [], [], [], []  # global means "over several epochs"
         EMs_val, F1s_val, loss_val = [], [], []  # exact_match- and F1-metrics as well as loss on the validation data
@@ -312,6 +319,7 @@ class Qa_model(object):
         for index_epoch in range(1, epochs + 1):
             progbar = trange(int(n_samples / batch_size))
             losses, EMs, f1s, grad_norms = [], [], [], []
+            self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation, n_samples=n_samples)
 
             ############### train for one epoch ###############
             for _ in progbar:
@@ -339,10 +347,26 @@ class Qa_model(object):
             ############### After an epoch: evaluate on validation set ###############
             logging.info("Epoch {} finished. Doing evaluation on validation set...".format(index_epoch))
             # TODO: dissect validation set into batches. Otherwise we might run into OutOfMemory errors
-            feed_dict = self.get_feed_dict(self.Xval_c, self.Xval_c_mask, self.Xval_q, self.Xval_q_mask, self.yvalS,
-                                           self.yvalE, 1)
-            loss_on_validation, predictionS, predictionE = sess.run([self.loss, self.predictionS, self.predictionE],
-                                                                    feed_dict=feed_dict)
+            # TODO: the above is done. but the code is super ugly. make this pretty!
+            self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation,
+                                             n_samples=len(self.yvalE))
+            progbar = trange(int(len(self.yvalE) / batch_size))
+            lov, ps, pe = [], [], []
+            for _ in progbar:
+                batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE = self.next_batch(
+                    batch_size=batch_size, permutation_after_epoch=self.FLAGS.batch_permutation, val=True)
+                feed_dict = self.get_feed_dict(batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS,
+                                               batch_yE, 1)
+                loss_on_validation, predictionS, predictionE = sess.run(
+                    [self.loss, self.predictionS, self.predictionE],
+                    feed_dict=feed_dict)
+                lov.append(loss_on_validation)
+                ps.append(predictionS)
+                pe.append(predictionE)
+
+            loss_on_validation = np.mean(lov)
+            predictionS = np.reshape(ps, [ps.shape[0] * ps.shape[1], ps.shape[2]])
+            predictionE = np.reshape(pe, [pe.shape[0] * pe.shape[1], pe.shape[2]])
 
             EM_val = self.get_exact_match(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
             F1_val = self.get_f1(self.yvalS, self.yvalE, predictionS, predictionE, self.Xval_c_mask)
@@ -353,6 +377,7 @@ class Qa_model(object):
             EMs_val.append(EM_val)
             F1s_val.append(F1_val)
             loss_val.append(loss_on_validation)
+
 
             ############### do some plotting ###############
             if index_epoch > 1:
