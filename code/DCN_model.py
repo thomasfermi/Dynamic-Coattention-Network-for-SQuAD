@@ -146,7 +146,7 @@ class DCN_qa_model(Qa_model):
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
 
-        coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
+        #coattention_context = tf.nn.dropout(coattention_context, self.dropout_placeholder)
 
         projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
                                           initializer=tf.contrib.layers.xavier_initializer())
@@ -189,10 +189,7 @@ class DCN_qa_model(Qa_model):
 
     def decode_with_baseline_decoder3(self, coattention_context):
         """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary) 
-        Advance over baseline_decoder1: First decode prob_start. Then Decode prob_end conditioned on prob_start. """
-        float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
-        int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
-
+        Advance over baseline_decoder1 and 2: Use decoder RNN """
         c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
         c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
 
@@ -205,4 +202,4 @@ class DCN_qa_model(Qa_model):
 
         logging.info("decoded={}".format(decoded))
 
-        return self.decode_with_baseline_decoder1(decoded)
+        return self.decode_with_baseline_decoder2(decoded)
