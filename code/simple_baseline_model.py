@@ -16,16 +16,13 @@ class Simple_baseline_qa_model(Qa_model):
     
     The point of this model is to check if the general setup in abstract_model has a bug. If this simple model would 
     not learn anything (exact_match less than 1%), there would be a bug somewhere."""
+
     def add_prediction_and_loss(self):
         WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
                               trainable=False)
 
         embedded_q = tf.nn.embedding_lookup(params=WEM, ids=self.q_input_placeholder)
         embedded_c = tf.nn.embedding_lookup(params=WEM, ids=self.c_input_placeholder)
-
-        logging.info("embedded_q.shape={}".format(embedded_q.shape))
-        logging.info("embedded_c.shape={}".format(embedded_c.shape))
-        logging.info("labels_placeholderS.shape={}".format(self.labels_placeholderS.shape))
 
         rnn_size = self.FLAGS.rnn_state_size
         with tf.variable_scope("rnn", reuse=None):
@@ -46,37 +43,19 @@ class Simple_baseline_qa_model(Qa_model):
                                                          initial_state=question_rep,
                                                          time_major=False)
 
-        logging.info("Everything went better than expected")
-
-        logging.info("c_outputs.shape={}".format(c_outputs.shape))
-        logging.info("q_outputs.shape={}".format(q_outputs.shape))
-        logging.info("question_rep.shape={}".format(question_rep.shape))
-
         attention = tf.einsum('ik,ijk->ij', question_rep, c_outputs)
-        logging.info("attention.shape={}".format(attention))
-        # weighted_context = tf.einsum('ijk,ij->ijk',c_outputs, attention)
-        # logging.info("weighted_context={}".format(weighted_context))
-        # knowledge_vector = tf.reshape(weighted_context, [-1,self.max_c_length*rnn_size])
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         knowledge_vector = attention * float_mask
-        logging.info("knowledge_vector={}".format(knowledge_vector))
 
         xe = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
-        logging.info("xe.shape={}".format(xe.shape))
-
         xs = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(knowledge_vector)
 
-        logging.info("self.c_mask_placeholder.shape={}".format(self.c_mask_placeholder.shape))
-
-        int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
         xs = xs * float_mask
         xe = xe * float_mask
-        mls = self.labels_placeholderS * int_mask
-        mle = self.labels_placeholderE * int_mask
 
-        cross_entropyS = tf.nn.softmax_cross_entropy_with_logits(labels=mls, logits=xs,
+        cross_entropyS = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=xs,
                                                                  name="cross_entropyS")
-        cross_entropyE = tf.nn.softmax_cross_entropy_with_logits(labels=mle, logits=xe,
+        cross_entropyE = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=xe,
                                                                  name="cross_entropyE")
         predictionS = tf.argmax(xs, 1)
         predictionE = tf.argmax(xe, 1)

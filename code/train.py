@@ -7,7 +7,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from simple_baseline_model import Simple_baseline_qa_model
 from DCN_model import DCN_qa_model
-from BIDAF_model import BIDAF_qa_model
 
 import logging
 
@@ -45,7 +44,6 @@ FLAGS = tf.app.flags.FLAGS
 def main(_):
     # I do not use the code supplied by the CS224n staff for this main method
     # Just create a model, train it and evaluate on validation set
-    # print FLAGS.learning_rate
 
     if not os.path.exists(FLAGS.figure_directory):
         os.makedirs(FLAGS.figure_directory)
@@ -54,8 +52,6 @@ def main(_):
         model = Simple_baseline_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
     elif FLAGS.model == "DCN":
         model = DCN_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
-    elif FLAGS.model == "BIDAF":
-        model = BIDAF_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
     else:
         raise ValueError("model must be either 'baseline' or 'DCN'")
     model.train()
