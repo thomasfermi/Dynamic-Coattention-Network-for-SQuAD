@@ -177,6 +177,8 @@ class Qa_model(object):
         for i in range(len(yS)):
             s = np.argmax(yS[i])
             e = np.argmax(yE[i])
+            if e<s:
+                s,e = e,s # allow flipping between start and end
             if np.array_equal(s, ypS[i]) and np.array_equal(e, ypE[i]):
                 count += 1
         match_fraction = count / float(len(yS))

@@ -1,6 +1,7 @@
 import tensorflow as tf
 import logging
 from abstract_model import Qa_model
+import numpy as np
 
 
 class DCN_qa_model(Qa_model):
@@ -12,7 +13,7 @@ class DCN_qa_model(Qa_model):
 
     def add_prediction_and_loss(self):
         coattention_context = self.encode()
-        prediction_start, prediction_end, loss = self.decode_with_deep_bi_rnn(coattention_context)
+        prediction_start, prediction_end, loss = self.dp_decode(coattention_context)
         #coattention_context = self.encode()
         #prediction_start, prediction_end, loss = self.decode_with_rnn(coattention_context)
 
@@ -68,7 +69,7 @@ class DCN_qa_model(Qa_model):
         L = tf.einsum('ijk,ijl->ikl', D, Q)
         logging.info("L={}".format(L))
 
-        AQ = tf.nn.softmax(L)  # TODO: is it the right dimension?
+        AQ = tf.nn.softmax(L)  # TODO: is it the right dimension? => test shows: doesn't even matter!
         logging.info("AQ={}".format(AQ))
         AD = tf.nn.softmax(tf.transpose(L, [0, 2, 1]))
         logging.info("AD={}".format(AD))
@@ -342,5 +343,95 @@ class DCN_qa_model(Qa_model):
         logging.info("decoded={}".format(decoded))
 
         return self.decode_with_baseline_decoder2(decoded)
+
+    def dp_decode(self, coattention_context):
+        # first guess s and e as in simple decoder
+        float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
+        projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                          initializer=tf.contrib.layers.xavier_initializer())
+        projector_end = tf.get_variable(name="projectorE", shape=(coattention_context.shape[2],), dtype=tf.float32,
+                                        initializer=tf.contrib.layers.xavier_initializer())
+
+        prob_start = tf.einsum('ijk,k->ij', coattention_context, projector_start) * float_mask
+        prob_end = tf.einsum('ijk,k->ij', coattention_context, projector_end) * float_mask
+
+        x = coattention_context  # for abbreviation
+
+        logging.info("prob_start={}".format(prob_start))
+        logging.info("prob_end={}".format(prob_end))
+        # feed s and e though dynamic pointer decoder
+
+        dim = self.FLAGS.rnn_state_size
+        h = tf.zeros(shape=(tf.shape(x)[0], 2*dim), dtype='float32', name="h_dpd")
+
+        with tf.variable_scope("dpd_RNN"):
+            cell = tf.contrib.rnn.GRUCell(2*dim)
+            for time_step in range(2):
+                ### YOUR CODE HERE (~6-10 lines)
+                if time_step >= 1:
+                    tf.get_variable_scope().reuse_variables()
+                start_rep = tf.einsum('bcd,bc->bd',x,tf.nn.softmax(prob_start))
+                end_rep = tf.einsum('bcd,bc->bd', x, tf.nn.softmax(prob_end))
+
+                logging.info("start_rep={}".format(start_rep))
+
+                joini = tf.concat([start_rep, end_rep], axis=1)
+                logging.info("joini={}".format(joini))
+
+                h, _ = cell(inputs=joini, state=h)
+                logging.info("h={}".format(h))
+                conco = tf.concat([start_rep,end_rep,h],axis=1)
+                logging.info("conco={}".format(conco))
+
+                # a=x, y=conco
+                conco = tf.tile(conco, [1, tf.shape(x)[1]])
+                logging.info("conco={}".format(conco))
+                conco = tf.reshape(conco, [tf.shape(x)[0], tf.shape(x)[1],6*dim])
+                logging.info("conco={}".format(conco))
+                # y.shape
+                x_dnn = tf.concat([x, conco], axis=2)
+
+                logging.info("x_dnn={}".format(x_dnn))
+
+                # x(b c 3d) W(3d d) +b(d)
+                W= tf.get_variable(name="W1", shape=(8*dim, 4*dim), dtype='float32',
+                                  initializer=tf.contrib.layers.xavier_initializer())
+                b =tf.get_variable(name="b1", shape=(4 * dim, ), dtype='float32',
+                                    initializer=tf.contrib.layers.xavier_initializer())
+
+                logging.info("W={}".format(W))
+                logging.info("b={}".format(b))
+                x_dnn=tf.nn.relu(tf.einsum('bcd,dn->bcn',x_dnn,W)+b)
+
+                logging.info("x_dnn={}".format(x_dnn))
+                #add dropout
+                W2 = tf.get_variable(name="W2", shape=(4 * dim, 2 * dim), dtype='float32',
+                                    initializer=tf.contrib.layers.xavier_initializer())
+                b2 = tf.get_variable(name="b2", shape=(2 * dim,), dtype='float32',
+                                    initializer=tf.contrib.layers.xavier_initializer())
+                x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W2) + b2)
+
+                prob_start = tf.einsum('ijk,k->ij', x_dnn, projector_start) * float_mask
+                prob_end = tf.einsum('ijk,k->ij', x_dnn, projector_end) * float_mask
+
+                logging.info("x_dnn={}".format(x_dnn))
+        # end of dynamic pointing decoder
+
+        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS,
+                                                                      logits=prob_start,
+                                                                      name="cross_entropy_start")
+        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE,
+                                                                    logits=prob_end,
+                                                                    name="cross_entropy_end")
+        prediction_start = tf.argmax(prob_start, 1)
+        prediction_end = tf.argmax(prob_end, 1)
+
+        logging.info("cross_entropy_end={}".format(cross_entropy_end))
+
+        loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
+
+        logging.info("loss.shape={}".format(loss.shape))
+        return prediction_start, prediction_end, loss
+
 
 
