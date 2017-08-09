@@ -11,8 +11,8 @@ class DCN_qa_model(Qa_model):
     """
 
     def add_prediction_and_loss(self):
-        coattention_context = self.encode_bi_rnn()
-        prediction_start, prediction_end, loss = self.decode_with_bi_rnn(coattention_context)
+        coattention_context = self.encode()
+        prediction_start, prediction_end, loss = self.decode_with_deep_bi_rnn(coattention_context)
         #coattention_context = self.encode()
         #prediction_start, prediction_end, loss = self.decode_with_rnn(coattention_context)
 
@@ -85,10 +85,23 @@ class DCN_qa_model(Qa_model):
         logging.info("CDprime={}".format(CDprime))
         CDprime = tf.transpose(CDprime, [0, 2, 1])
 
+        #with tf.variable_scope("u_rnn", reuse=False):
+        #    cell = tf.contrib.rnn.GRUCell(2 * rnn_size)
+        #    coattention_context, _ = tf.nn.dynamic_rnn(cell, inputs=CDprime, dtype=tf.float32,
+        #                                               sequence_length=c_sequence_length)
+
         with tf.variable_scope("u_rnn", reuse=False):
-            cell = tf.contrib.rnn.GRUCell(2 * rnn_size)
-            coattention_context, _ = tf.nn.dynamic_rnn(cell, inputs=CDprime, dtype=tf.float32,
-                                                       sequence_length=c_sequence_length)
+            cell_fw = tf.contrib.rnn.GRUCell(rnn_size)
+            cell_bw = tf.contrib.rnn.GRUCell(rnn_size)
+            (cc_fw, cc_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, inputs=CDprime,
+                                                                     sequence_length=c_sequence_length,
+                                                                     dtype=tf.float32)
+
+        logging.info("cc_fw={}".format(cc_fw))
+        logging.info("cc_bw={}".format(cc_bw))
+
+        coattention_context = tf.concat([cc_fw, cc_bw], axis=2)
+
 
         logging.info("coattention_context.shape={}".format(coattention_context.shape))
 
@@ -170,8 +183,8 @@ class DCN_qa_model(Qa_model):
         CDprime = tf.transpose(CDprime, [0, 2, 1])
 
         with tf.variable_scope("u_rnn", reuse=False):
-            cell_fw = tf.contrib.rnn.GRUCell(2 * rnn_size)
-            cell_bw = tf.contrib.rnn.GRUCell(2 * rnn_size)
+            cell_fw = tf.contrib.rnn.GRUCell(rnn_size)
+            cell_bw = tf.contrib.rnn.GRUCell(rnn_size)
             (cc_fw, cc_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, inputs=CDprime,
                                                                      sequence_length=c_sequence_length,
                                                                      dtype=tf.float32)
@@ -310,3 +323,24 @@ class DCN_qa_model(Qa_model):
         logging.info("decoded={}".format(decoded))
 
         return self.decode_with_baseline_decoder2(decoded)
+
+    def decode_with_deep_bi_rnn(self, coattention_context, num_layers=3):
+        c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
+        c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
+
+        with tf.variable_scope("decoder_rnn_end", reuse=False):
+            cell_fw = tf.contrib.rnn.MultiRNNCell(
+                [tf.contrib.rnn.GRUCell(self.FLAGS.rnn_state_size) for _ in range(num_layers)])
+            cell_bw = tf.contrib.rnn.MultiRNNCell(
+                [tf.contrib.rnn.GRUCell(self.FLAGS.rnn_state_size) for _ in range(num_layers)])
+            (decoded_fw, decoded_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, inputs=coattention_context,
+                                                                          sequence_length=c_sequence_length,
+                                                                          dtype=tf.float32)
+
+        decoded=tf.concat([decoded_fw, decoded_bw],axis=2)
+
+        logging.info("decoded={}".format(decoded))
+
+        return self.decode_with_baseline_decoder2(decoded)
+
+

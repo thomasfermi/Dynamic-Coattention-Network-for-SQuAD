@@ -61,9 +61,11 @@ class BIDAF_qa_model(Qa_model):
         H = tf.concat([c_outputs_fw, c_outputs_bw], axis=2)
         H = tf.transpose(H, [0, 2, 1])
         logging.info("H={}".format(H))
+        logging.info("H[:,:,0].shape={}".format(H[:,:,0]))
+
+        assert False
 
         S = tf.einsum('bij,bik->bjk',H,U)
 
         logging.info("S={}".format(S))
 
-        assert False
