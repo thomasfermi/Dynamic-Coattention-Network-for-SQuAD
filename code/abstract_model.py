@@ -348,7 +348,7 @@ class Qa_model(object):
             logging.info("Epoch {} finished. Doing evaluation on validation set...".format(index_epoch))
             self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation,
                                              n_samples=len(self.yvalE))
-            val_batch_size = 4*batch_size #let's hope we don't run out of memory ;)
+            val_batch_size = batch_size # can be a multiple of batch_size, but be sure to not run out of memory
             losses, ems, f1s = [], [], []
             for _ in range(int(len(self.yvalE) / val_batch_size)):
                 batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE = self.next_batch(

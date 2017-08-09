@@ -13,7 +13,7 @@ class DCN_qa_model(Qa_model):
     def add_prediction_and_loss(self):
         coattention_context = self.encode()
         # prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
-        prediction_start, prediction_end, loss = self.decode_with_baseline_decoder3(coattention_context)
+        prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
 
         return prediction_start, prediction_end, loss
 
@@ -93,6 +93,16 @@ class DCN_qa_model(Qa_model):
 
         return coattention_context
 
+
+    def pad_with_very_negative(self,tensor,mask):
+        pad = tf.cast(mask, dtype=tf.float32)  # True, False => 1,0
+        one, very_large_number = tf.constant(1, dtype=tensor.dtype), tf.constant(1e10, dtype=tensor.dtype)
+        pad = pad - one  # 1,0 => 0,-1
+        pad = pad * very_large_number  # 0, -1 => 0, -1e-10
+        tensor = tf.where(mask, tensor, pad)
+        return tensor
+
+
     def decode_with_baseline_decoder1(self, coattention_context):
         """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary) 
         Decoding is done by a simple projection. """
@@ -112,15 +122,13 @@ class DCN_qa_model(Qa_model):
 
         logging.info("self.c_mask_placeholder.shape={}".format(self.c_mask_placeholder.shape))
 
-        int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
-        xs = xs * float_mask
-        xe = xe * float_mask
-        mls = self.labels_placeholderS * int_mask
-        mle = self.labels_placeholderE * int_mask
+        xs= self.pad_with_very_negative(xs,self.c_mask_placeholder) #instead of multiplying with float mask
+        xe= self.pad_with_very_negative(xe,self.c_mask_placeholder)
 
-        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=mls, logits=xs,
+
+        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=xs,
                                                                       name="cross_entropy_start")
-        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=mle, logits=xe,
+        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=xe,
                                                                     name="cross_entropy_end")
         prediction_start = tf.argmax(xs, 1)
         prediction_end = tf.argmax(xe, 1)
@@ -185,47 +193,16 @@ class DCN_qa_model(Qa_model):
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         int_mask = tf.cast(self.c_mask_placeholder, dtype=tf.int32)
 
+        c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
+        c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
 
-        with tf.variable_scope("decoder_rnn_start", reuse=False):
-            start_cell = tf.contrib.rnn.GRUCell(self.max_c_length)
-            c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
-            c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
-            _, prob_start = tf.nn.dynamic_rnn(cell=start_cell, inputs=coattention_context,
+        with tf.variable_scope("decoder_rnn", reuse=False):
+            start_cell = tf.contrib.rnn.GRUCell(self.FLAGS.rnn_state_size)
+            decoded, _ = tf.nn.dynamic_rnn(cell=start_cell, inputs=coattention_context,
                                                          sequence_length=c_sequence_length,
                                                          dtype=tf.float32,
                                                          time_major=False)
 
-        with tf.variable_scope("decoder_rnn_end", reuse=False):
-            end_cell = tf.contrib.rnn.GRUCell(self.max_c_length)
+        logging.info("decoded={}".format(decoded))
 
-            _, prob_end = tf.nn.dynamic_rnn(cell=end_cell, inputs=coattention_context,
-                                                        sequence_length=c_sequence_length,
-                                                        initial_state=prob_start,
-                                                        time_major=False)
-
-
-        logging.info("prob_start={}".format(prob_start))
-        prob_start = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_start)
-        prob_start = prob_start * float_mask
-        logging.info("prob_start={}".format(prob_start))
-        prob_end = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_end)
-        logging.info("prob_end={}".format(prob_end))
-
-        prob_end = prob_end * float_mask
-
-        masked_label_start = self.labels_placeholderS * int_mask
-        masked_label_end = self.labels_placeholderE * int_mask
-
-        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_start, logits=prob_start,
-                                                                      name="cross_entropy_start")
-        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=masked_label_end, logits=prob_end,
-                                                                    name="cross_entropy_end")
-        prediction_start = tf.argmax(prob_start, 1)
-        prediction_end = tf.argmax(prob_end, 1)
-
-        logging.info("cross_entropy_end={}".format(cross_entropy_end))
-
-        loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
-
-        logging.info("loss.shape={}".format(loss.shape))
-        return prediction_start, prediction_end, loss
+        return self.decode_with_baseline_decoder1(decoded)
