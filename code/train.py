@@ -7,11 +7,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from simple_baseline_model import Simple_baseline_qa_model
 from DCN_model import DCN_qa_model
+from BIDAF_model import BIDAF_qa_model
 
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
-tf.app.flags.DEFINE_string("model", "baseline", "Choose which model to use baseline/DCN")
+tf.app.flags.DEFINE_string("model", "baseline", "Choose which model to use baseline/DCN/BIDAF")
 tf.app.flags.DEFINE_float("learning_rate", 0.01, "Learning rate.")
 tf.app.flags.DEFINE_integer("batch_size", 32, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 20, "Number of epochs to train.")
@@ -53,6 +54,8 @@ def main(_):
         model = Simple_baseline_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
     elif FLAGS.model == "DCN":
         model = DCN_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
+    elif FLAGS.model == "BIDAF":
+        model = BIDAF_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
     else:
         raise ValueError("model must be either 'baseline' or 'DCN'")
     model.train()

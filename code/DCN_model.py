@@ -11,9 +11,10 @@ class DCN_qa_model(Qa_model):
     """
 
     def add_prediction_and_loss(self):
-        coattention_context = self.encode()
-        # prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
-        prediction_start, prediction_end, loss = self.decode_with_baseline_decoder1(coattention_context)
+        coattention_context = self.encode_bi_rnn()
+        prediction_start, prediction_end, loss = self.decode_with_bi_rnn(coattention_context)
+        #coattention_context = self.encode()
+        #prediction_start, prediction_end, loss = self.decode_with_rnn(coattention_context)
 
         return prediction_start, prediction_end, loss
 
@@ -93,6 +94,95 @@ class DCN_qa_model(Qa_model):
 
         return coattention_context
 
+    def encode_bi_rnn(self):
+        self.WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
+                                   trainable=False)
+
+        self.embedded_q = tf.nn.embedding_lookup(params=self.WEM, ids=self.q_input_placeholder)
+        self.embedded_c = tf.nn.embedding_lookup(params=self.WEM, ids=self.c_input_placeholder)
+
+        logging.info("embedded_q.shape={}".format(self.embedded_q.shape))
+        logging.info("embedded_c.shape={}".format(self.embedded_c.shape))
+        logging.info("labels_placeholderS.shape={}".format(self.labels_placeholderS.shape))
+
+        rnn_size = self.FLAGS.rnn_state_size
+        with tf.variable_scope("rnn", reuse=None):
+            cell_fw = tf.contrib.rnn.GRUCell(rnn_size)
+            cell_bw = tf.contrib.rnn.GRUCell(rnn_size)
+            q_sequence_length = tf.reduce_sum(tf.cast(self.q_mask_placeholder, tf.int32), axis=1)
+            q_sequence_length = tf.reshape(q_sequence_length, [-1, ])
+            c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
+            c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
+
+            (q_outputs_fw, q_outputs_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw,
+                                                                              inputs=self.embedded_q,
+                                                                              sequence_length=q_sequence_length,
+                                                                              dtype=tf.float32)
+
+        logging.info("q_outputs_fw={}".format(q_outputs_fw))
+        q_outputs = tf.concat([q_outputs_fw, q_outputs_bw], axis=2)
+
+        Qprime = q_outputs
+        Qprime = tf.transpose(Qprime, [0, 2, 1], name="Qprime")
+        logging.info("Qprime={}".format(Qprime))
+        #assert False
+
+        # add tanh layer to go from Qprime to Q
+        WQ = tf.get_variable("WQ", (self.max_q_length, self.max_q_length),
+                             initializer=tf.contrib.layers.xavier_initializer())
+        bQ = tf.get_variable("bQ", shape=(Qprime.shape[1], self.max_q_length),
+                             initializer=tf.contrib.layers.xavier_initializer())
+        logging.info("WQ={}".format(WQ))
+        Q = tf.einsum('ijk,kl->ijl', Qprime, WQ)
+        Q = tf.nn.tanh(Q + bQ, name="Q")
+        logging.info("Q={}".format(Q))
+
+        with tf.variable_scope("rnn", reuse=True):
+            (c_outputs_fw, c_outputs_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw,
+                                                                              inputs=self.embedded_c,
+                                                                              sequence_length=c_sequence_length,
+                                                                              dtype=tf.float32)
+
+        c_outputs = tf.concat([c_outputs_fw, c_outputs_bw], axis=2)
+
+        D = c_outputs
+        D = tf.transpose(D, [0, 2, 1], name="D")
+        logging.info("D={}".format(D))
+
+        L = tf.einsum('ijk,ijl->ikl', D, Q)
+        logging.info("L={}".format(L))
+
+        AQ = tf.nn.softmax(L)  # TODO: is it the right dimension?
+        logging.info("AQ={}".format(AQ))
+        AD = tf.nn.softmax(tf.transpose(L, [0, 2, 1]))
+        logging.info("AD={}".format(AD))
+
+        CQ = tf.matmul(D, AQ)
+        logging.info("CQ={}".format(CQ))
+        CD1 = tf.matmul(Q, AD)
+        CD2 = tf.matmul(CQ, AD)
+        CD = tf.concat([CD1, CD2], axis=1)
+        CDprime = tf.concat([CD, D], axis=1)
+        logging.info("CD1={}".format(CD1))
+        logging.info("CD2={}".format(CD2))
+        logging.info("CD={}".format(CD))
+        logging.info("CDprime={}".format(CDprime))
+        CDprime = tf.transpose(CDprime, [0, 2, 1])
+
+        with tf.variable_scope("u_rnn", reuse=False):
+            cell_fw = tf.contrib.rnn.GRUCell(2 * rnn_size)
+            cell_bw = tf.contrib.rnn.GRUCell(2 * rnn_size)
+            (cc_fw, cc_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, inputs=CDprime,
+                                                                     sequence_length=c_sequence_length,
+                                                                     dtype=tf.float32)
+        logging.info("cc_fw={}".format(cc_fw))
+        logging.info("cc_bw={}".format(cc_bw))
+
+        coattention_context=tf.concat([cc_fw, cc_bw], axis=2)
+
+        logging.info("coattention_context.shape={}".format(coattention_context.shape))
+
+        return coattention_context
 
     def pad_with_very_negative(self,tensor,mask):
         pad = tf.cast(mask, dtype=tf.float32)  # True, False => 1,0
@@ -187,7 +277,7 @@ class DCN_qa_model(Qa_model):
         logging.info("loss.shape={}".format(loss.shape))
         return prediction_start, prediction_end, loss
 
-    def decode_with_baseline_decoder3(self, coattention_context):
+    def decode_with_rnn(self, coattention_context):
         """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary) 
         Advance over baseline_decoder1 and 2: Use decoder RNN """
         c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
@@ -199,6 +289,23 @@ class DCN_qa_model(Qa_model):
                                                          sequence_length=c_sequence_length,
                                                          dtype=tf.float32,
                                                          time_major=False)
+
+        logging.info("decoded={}".format(decoded))
+
+        return self.decode_with_baseline_decoder2(decoded)
+
+    def decode_with_bi_rnn(self, coattention_context):
+        c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
+        c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
+
+        with tf.variable_scope("decoder_rnn", reuse=False):
+            cell_fw = tf.contrib.rnn.GRUCell(self.FLAGS.rnn_state_size)
+            cell_bw = tf.contrib.rnn.GRUCell(self.FLAGS.rnn_state_size)
+            (decoded_fw, decoded_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, inputs=coattention_context,
+                                                                     sequence_length=c_sequence_length,
+                                                                     dtype=tf.float32)
+
+        decoded=tf.concat([decoded_fw, decoded_bw],axis=2)
 
         logging.info("decoded={}".format(decoded))
 
