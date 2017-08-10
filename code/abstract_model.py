@@ -187,10 +187,11 @@ class Qa_model(object):
     def plot_metrics(self, index_epoch, losses, val_losses, EMs, val_Ems, F1s, val_F1s, grad_norms):
         n_data_points = len(losses)
         epoch_axis = np.arange(n_data_points, dtype=np.float32) * index_epoch / float(n_data_points)
-        epoch_axis_val = np.arange(index_epoch) + 1
+        epoch_axis_val = list(range(index_epoch+1))
 
         plt.plot(epoch_axis, losses, label="training")
-        plt.plot(epoch_axis_val, val_losses, label="validation")
+        plt.plot(epoch_axis_val, [losses[0]]+val_losses, label="validation",marker="x",ms=15) #initial value from training set,
+        # just that we have a nice value for epoch=0 in the plot
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.legend()
@@ -198,7 +199,7 @@ class Qa_model(object):
         plt.close()
 
         plt.plot(epoch_axis, EMs, label="training")
-        plt.plot(epoch_axis_val, val_Ems, label="validation")
+        plt.plot(epoch_axis_val, [EMs[0]]+val_Ems, label="validation",marker="x",ms=15)
         plt.xlabel("epoch")
         plt.ylabel("EM")
         plt.legend()
@@ -206,7 +207,7 @@ class Qa_model(object):
         plt.close()
 
         plt.plot(epoch_axis, F1s, label="training")
-        plt.plot(epoch_axis_val, val_F1s, label="validation")
+        plt.plot(epoch_axis_val, [F1s[0]]+val_F1s, label="validation",marker="x",ms=15)
         plt.xlabel("epoch")
         plt.ylabel("F1")
         plt.legend()
@@ -373,6 +374,6 @@ class Qa_model(object):
 
 
             ############### do some plotting ###############
-            if index_epoch > 1:
-                self.plot_metrics(index_epoch, global_losses, loss_val, global_EMs, EMs_val, global_f1s, F1s_val,
+            #if index_epoch > 1:
+            self.plot_metrics(index_epoch, global_losses, loss_val, global_EMs, EMs_val, global_f1s, F1s_val,
                                   global_grad_norms)

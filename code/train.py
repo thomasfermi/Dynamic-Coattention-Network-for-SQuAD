@@ -21,6 +21,8 @@ tf.app.flags.DEFINE_float("dropout", 0.9, "1-Fraction of units randomly dropped 
 tf.app.flags.DEFINE_string("batch_permutation", "random",
                            "Choose whether training data is shuffled ('random'), ordered by length ('by_length'), "
                            "or kept in initial order ('None') for each epoch")
+tf.app.flags.DEFINE_integer("use_argmax", 0, "Only relevant for DCN. Changes the behavior of the decoder")
+
 
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")

@@ -13,7 +13,7 @@ class DCN_qa_model(Qa_model):
 
     def add_prediction_and_loss(self):
         coattention_context = self.encode()
-        prediction_start, prediction_end, loss = self.dp_decode(coattention_context)
+        prediction_start, prediction_end, loss = self.dp_decode(coattention_context, use_argmax=self.FLAGS.use_argmax)
         return prediction_start, prediction_end, loss
 
     def encode(self):
@@ -174,10 +174,12 @@ class DCN_qa_model(Qa_model):
         loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
         return prediction_start, prediction_end, loss
 
-    def dp_decode(self, coattention_context):
+    def dp_decode(self, coattention_context, use_argmax=False):
         """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary)
         A decoder very similar to the dynamic pointer decoder proposed by Xiong et al. (
-        https://arxiv.org/abs/1611.01604). Works as follows:
+        https://arxiv.org/abs/1611.01604). 
+        
+        Works as follows (if use_argmax=False):
         1. Project each hidden vector corresponding to a context word onto a weight vector. This results in a vector 
         of length=context_length. Apply softmax and interpret as probability that word i in the context is start 
         word. Use another weight vector to get prob_end.
@@ -190,8 +192,14 @@ class DCN_qa_model(Qa_model):
         3 (c) Feed all context vectors through a Multilayer Perceptron, obtaining a matrix of the shape that the initial
         coattention matrix had. Consider this as new coattention matrix. Get new start_rep and end_rep as in steps 1 
         and 2. Goto 3 (a)
+        
+        If (use_argmax=False) the implementation is even closer to the DCN paper. The only difference now, 
+        is that we use a DNN instead of and HMN
         """
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
+        x = coattention_context  # for abbreviation
+        logging.info("coattention_context={}".format(coattention_context))
+
         projector_start = tf.get_variable(name="projectorS", shape=(coattention_context.shape[2],), dtype=tf.float32,
                                           initializer=tf.contrib.layers.xavier_initializer())
         projector_end = tf.get_variable(name="projectorE", shape=(coattention_context.shape[2],), dtype=tf.float32,
@@ -200,7 +208,10 @@ class DCN_qa_model(Qa_model):
         prob_start = tf.einsum('ijk,k->ij', coattention_context, projector_start) * float_mask
         prob_end = tf.einsum('ijk,k->ij', coattention_context, projector_end) * float_mask
 
-        x = coattention_context  # for abbreviation
+        if use_argmax:
+            i_start, i_end = tf.argmax(prob_start, 1), tf.argmax(prob_end, 1)
+            i_start, i_end = tf.cast(i_start, 'int32'), tf.cast(i_end, 'int32')
+            logging.info("i_start={}".format(i_start))
 
         logging.info("prob_start={}".format(prob_start))
         logging.info("prob_end={}".format(prob_end))
@@ -214,8 +225,17 @@ class DCN_qa_model(Qa_model):
             for time_step in range(4):
                 if time_step >= 1:
                     tf.get_variable_scope().reuse_variables()
-                start_rep = tf.einsum('bcd,bc->bd', x, tf.nn.softmax(prob_start))
-                end_rep = tf.einsum('bcd,bc->bd', x, tf.nn.softmax(prob_end))
+
+                # find start_rep using prob_start (or if use_argmax==True using i_start)
+                if use_argmax:
+                    idx = tf.range(0, tf.shape(x)[0], 1)
+                    s_idx = tf.stack([idx, i_start], axis=1)
+                    e_idx = tf.stack([idx, i_end], axis=1)
+                    start_rep = tf.gather_nd(x, s_idx)
+                    end_rep = tf.gather_nd(x, e_idx)
+                else: # fold with probability distribution instead of picking one single vector
+                    start_rep = tf.einsum('bcd,bc->bd', x, tf.nn.softmax(prob_start))
+                    end_rep = tf.einsum('bcd,bc->bd', x, tf.nn.softmax(prob_end))
 
                 logging.info("start_rep={}".format(start_rep))
 
@@ -255,6 +275,10 @@ class DCN_qa_model(Qa_model):
                 prob_start = tf.einsum('ijk,k->ij', x_dnn, projector_start) * float_mask
                 prob_end = tf.einsum('ijk,k->ij', x_dnn, projector_end) * float_mask
 
+                if use_argmax:
+                    i_start, i_end = tf.argmax(prob_start, 1), tf.argmax(prob_end, 1)
+                    i_start, i_end = tf.cast(i_start, 'int32'), tf.cast(i_end, 'int32')
+
                 logging.info("x_dnn={}".format(x_dnn))
         # end of dynamic pointing decoder
 
@@ -264,6 +288,7 @@ class DCN_qa_model(Qa_model):
         cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE,
                                                                     logits=prob_end,
                                                                     name="cross_entropy_end")
+
         prediction_start = tf.argmax(prob_start, 1)
         prediction_end = tf.argmax(prob_end, 1)
 
@@ -273,3 +298,4 @@ class DCN_qa_model(Qa_model):
 
         logging.info("loss.shape={}".format(loss.shape))
         return prediction_start, prediction_end, loss
+
