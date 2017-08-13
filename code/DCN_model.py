@@ -636,15 +636,34 @@ class DCN_qa_model(Qa_model):
 
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         dim = self.FLAGS.rnn_state_size
-        us = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
-        ue = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
+
+        # initialize us, ue by simple projection
+        projector_start = tf.get_variable(name="projectorS", shape=(U.shape[2],), dtype=tf.float32,
+                                          initializer=tf.contrib.layers.xavier_initializer())
+        projector_end = tf.get_variable(name="projectorE", shape=(U.shape[2],), dtype=tf.float32,
+                                        initializer=tf.contrib.layers.xavier_initializer())
+        alpha = tf.einsum('ijk,k->ij', U, projector_start) * float_mask
+        beta = tf.einsum('ijk,k->ij', U, projector_end) * float_mask
+        i_start, i_end = tf.argmax(alpha, 1), tf.argmax(beta,1)
+        if use_argmax:
+            idx = tf.range(0, tf.shape(U)[0], 1)
+            s_idx = tf.stack([idx, tf.cast(i_start, 'int32')], axis=1)
+            e_idx = tf.stack([idx, tf.cast(i_end, 'int32')], axis=1)
+            us = tf.gather_nd(U, s_idx)
+            ue = tf.gather_nd(U, e_idx)
+        else:
+            us = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(alpha))
+            ue = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(beta))
+
+        #us = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
+        #ue = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
         h = tf.zeros(shape=(tf.shape(U)[0], dim), dtype='float32', name="h_dpd")
 
         alphas, betas = [], []
 
         with tf.variable_scope("dpd_RNN"):
             cell = tf.contrib.rnn.GRUCell(dim)
-            for time_step in range(2):
+            for time_step in range(1): # number of iterations is hyperparameter
                 if time_step >= 1:
                     tf.get_variable_scope().reuse_variables()
 
@@ -657,7 +676,7 @@ class DCN_qa_model(Qa_model):
                 h_us_ue = tf.concat([h,us_ue],axis=1)
                 logging.info("us_ue={}".format(h_us_ue))
 
-                with tf.variable_scope("alpha_HMN"):
+                with tf.variable_scope("alpha_DNN"):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
                     alpha = DNN(U,h,us,ue) * float_mask
@@ -670,7 +689,7 @@ class DCN_qa_model(Qa_model):
                 else:
                     us = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(alpha))
 
-                with tf.variable_scope("beta_HMN"):
+                with tf.variable_scope("beta_DNN"):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
                     beta = DNN(U,h,us,ue) * float_mask
@@ -680,7 +699,7 @@ class DCN_qa_model(Qa_model):
                     e_idx = tf.stack([idx, tf.cast(i_end,'int32')], axis=1)
                     ue = tf.gather_nd(U, e_idx)
                 else:
-                    ue = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(alpha))
+                    ue = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(beta))
 
 
                 logging.info("beta={}".format(beta))

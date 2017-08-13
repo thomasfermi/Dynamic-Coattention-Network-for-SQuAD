@@ -117,10 +117,14 @@ class Qa_model(object):
 
     def add_training_op(self, loss):
         # use adam optimizer with exponentially decaying learning rate
-        # step_adam = tf.Variable(0, trainable=False)
-        # rate_adam = tf.train.exponential_decay(1e-3, step_adam, 1, 0.999)  # after one epoch: 0.999**2500 = 0.1
-        rate_adam = self.FLAGS.learning_rate
-        # hence learning rate decays by a factor of 0.1 each epoch
+        step_adam = tf.Variable(0, trainable=False)
+        rate_adam = tf.train.exponential_decay(self.FLAGS.learning_rate, step_adam, 1, 0.999)
+        # after one epoch: # 0.999**600 = 0.5,  hence learning rate decays by a factor of 0.5 each epoch
+        rate_adam = tf.maximum(rate_adam,tf.constant(self.FLAGS.learning_rate/5.))
+        # should not go down by more than a factor of 5
+
+        #rate_adam = self.FLAGS.learning_rate
+
         optimizer = tf.train.AdamOptimizer(rate_adam)
 
         grads_and_vars = optimizer.compute_gradients(loss)
@@ -131,7 +135,8 @@ class Qa_model(object):
         global_grad_norm = tf.global_norm(gradients)
         grads_and_vars = [(gradients[i], variables[i]) for i in range(len(gradients))]
 
-        train_op = optimizer.apply_gradients(grads_and_vars)
+        train_op = optimizer.apply_gradients(grads_and_vars, global_step=step_adam)
+        self.optimizer = optimizer
 
         return train_op, global_grad_norm
 
@@ -330,8 +335,9 @@ class Qa_model(object):
                     batch_size=batch_size, permutation_after_epoch=self.FLAGS.batch_permutation)
                 feed_dict = self.get_feed_dict(batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE,
                                                self.FLAGS.dropout)
-                _, current_loss, predictionS, predictionE, grad_norm = sess.run(
-                    [self.train_op, self.loss, self.predictionS, self.predictionE, self.global_grad_norm],
+                _, current_loss, predictionS, predictionE, grad_norm, curr_lr = sess.run(
+                    [self.train_op, self.loss, self.predictionS, self.predictionE, self.global_grad_norm,
+                     self.optimizer._lr],
                     feed_dict=feed_dict)
                 ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
                 f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
@@ -340,7 +346,7 @@ class Qa_model(object):
 
                 if len(losses) >= 20:
                     progbar.set_postfix({'loss': np.mean(losses), 'EM': np.mean(ems), 'f1': np.mean(f1s),
-                                         'grad_norm': np.mean(grad_norms)})
+                                         'grad_norm': np.mean(grad_norms), 'lr': curr_lr})
                     global_losses.append(np.mean(losses))
                     global_EMs.append(np.mean(ems))
                     global_f1s.append(np.mean(f1s))
