@@ -590,7 +590,7 @@ class DCN_qa_model(Qa_model):
         return i_start, i_end, loss
 
 
-    def dp_decode_DNN_for_HMN(self, U):
+    def dp_decode_DNN_for_HMN(self, U, use_argmax=False):
         """ Now really like in the paper. DNN instead of HMN"""
         def DNN(U, h, us, ue):
             ######## prepare DNN input ########
@@ -602,6 +602,7 @@ class DCN_qa_model(Qa_model):
             logging.info("x_dnn={}".format(x_dnn))
 
             ######## layer 1 ########
+            """
             W = tf.get_variable(name="W1", shape=(7 * dim, 4 * dim), dtype='float32',
                                 initializer=tf.contrib.layers.xavier_initializer())
             b = tf.get_variable(name="b1", shape=(4 * dim,), dtype='float32',
@@ -610,24 +611,26 @@ class DCN_qa_model(Qa_model):
             logging.info("b={}".format(b))
             x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W) + b)
             logging.info("x_dnn={}".format(x_dnn))
+            """
 
             ######## layer 2 ########
-            W2 = tf.get_variable(name="W2", shape=(4 * dim, dim), dtype='float32',
+            W2 = tf.get_variable(name="W2", shape=(7 * dim, dim), dtype='float32',
                                  initializer=tf.contrib.layers.xavier_initializer())
             b2 = tf.get_variable(name="b2", shape=(dim,), dtype='float32',
                                  initializer=tf.contrib.layers.xavier_initializer())
             x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W2) + b2)
             logging.info("x_dnn={}".format(x_dnn))
 
+
             ######## layer 3 ########
-            W3 = tf.get_variable(name="W3", shape=(dim, 1), dtype='float32',
+            W3 = tf.get_variable(name="W3", shape=(dim,), dtype='float32',
                                  initializer=tf.contrib.layers.xavier_initializer())
             b3 = tf.get_variable(name="b3", shape=(1,), dtype='float32',
                                  initializer=tf.contrib.layers.xavier_initializer())
-            x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W3) + b3)
+            x_dnn = tf.nn.relu(tf.einsum('bcd,d->bc', x_dnn, W3) + b3)
 
             ######## return ########
-            x_dnn = tf.reshape(x_dnn, shape=[-1, self.max_c_length]) * float_mask
+            #x_dnn = tf.reshape(x_dnn, shape=[-1, self.max_c_length]) * float_mask
             logging.info("return x_dnn={}".format(x_dnn))
             return x_dnn
 
@@ -660,9 +663,12 @@ class DCN_qa_model(Qa_model):
                     alpha = DNN(U,h,us,ue) * float_mask
 
                 i_start = tf.argmax(alpha, 1)
-                idx = tf.range(0, tf.shape(U)[0], 1)
-                s_idx = tf.stack([idx, tf.cast(i_start,'int32')], axis=1)
-                us = tf.gather_nd(U, s_idx)
+                if use_argmax:
+                    idx = tf.range(0, tf.shape(U)[0], 1)
+                    s_idx = tf.stack([idx, tf.cast(i_start, 'int32')], axis=1)
+                    us = tf.gather_nd(U, s_idx)
+                else:
+                    us = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(alpha))
 
                 with tf.variable_scope("beta_HMN"):
                     if time_step >= 1:
@@ -670,8 +676,12 @@ class DCN_qa_model(Qa_model):
                     beta = DNN(U,h,us,ue) * float_mask
 
                 i_end = tf.argmax(beta, 1)
-                e_idx = tf.stack([idx, tf.cast(i_end,'int32')], axis=1)
-                ue = tf.gather_nd(U, e_idx)
+                if use_argmax:
+                    e_idx = tf.stack([idx, tf.cast(i_end,'int32')], axis=1)
+                    ue = tf.gather_nd(U, e_idx)
+                else:
+                    ue = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(alpha))
+
 
                 logging.info("beta={}".format(beta))
                 logging.info("ue={}".format(ue))
