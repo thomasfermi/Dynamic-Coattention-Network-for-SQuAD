@@ -589,10 +589,10 @@ class DCN_qa_model(Qa_model):
         logging.info("loss.shape={}".format(loss.shape))
         return i_start, i_end, loss
 
-
     def dp_decode_DNN_for_HMN(self, U, use_argmax=False):
         """ Now really like in the paper. DNN instead of HMN"""
         def DNN(U, h, us, ue):
+            dim = self.FLAGS.rnn_state_size
             ######## prepare DNN input ########
             rep_h = tf.concat([h, us, ue], axis=1)
             rep_h = tf.tile(rep_h, [1, tf.shape(U)[1]])
@@ -602,22 +602,21 @@ class DCN_qa_model(Qa_model):
             logging.info("x_dnn={}".format(x_dnn))
 
             ######## layer 1 ########
-            """
-            W = tf.get_variable(name="W1", shape=(7 * dim, 4 * dim), dtype='float32',
+            W = tf.get_variable(name="W1", shape=(7 * dim, dim), dtype='float32',
                                 initializer=tf.contrib.layers.xavier_initializer())
-            b = tf.get_variable(name="b1", shape=(4 * dim,), dtype='float32',
-                                initializer=tf.contrib.layers.xavier_initializer())
+            b = tf.get_variable(name="b1", shape=(dim,), dtype='float32',
+                                initializer=tf.zeros_initializer())
             logging.info("W={}".format(W))
             logging.info("b={}".format(b))
             x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W) + b)
             logging.info("x_dnn={}".format(x_dnn))
-            """
+
 
             ######## layer 2 ########
-            W2 = tf.get_variable(name="W2", shape=(7 * dim, dim), dtype='float32',
+            W2 = tf.get_variable(name="W2", shape=(dim, dim), dtype='float32',
                                  initializer=tf.contrib.layers.xavier_initializer())
             b2 = tf.get_variable(name="b2", shape=(dim,), dtype='float32',
-                                 initializer=tf.contrib.layers.xavier_initializer())
+                                 initializer=tf.zeros_initializer())
             x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W2) + b2)
             logging.info("x_dnn={}".format(x_dnn))
 
@@ -626,7 +625,7 @@ class DCN_qa_model(Qa_model):
             W3 = tf.get_variable(name="W3", shape=(dim,), dtype='float32',
                                  initializer=tf.contrib.layers.xavier_initializer())
             b3 = tf.get_variable(name="b3", shape=(1,), dtype='float32',
-                                 initializer=tf.contrib.layers.xavier_initializer())
+                                 initializer=tf.zeros_initializer())
             x_dnn = tf.nn.relu(tf.einsum('bcd,d->bc', x_dnn, W3) + b3)
 
             ######## return ########
@@ -715,6 +714,8 @@ class DCN_qa_model(Qa_model):
         losses_alpha = [tf.reduce_mean(x) for x in losses_alpha]
         losses_beta = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=b) for b in betas]
         losses_beta = [tf.reduce_mean(x) for x in losses_beta]
+
+        logging.info("losses_alpha={}".format(losses_alpha))
 
         loss = tf.reduce_sum([losses_alpha, losses_beta], name='loss')
 
