@@ -378,7 +378,7 @@ class Qa_model(object):
                 batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE = self.next_batch(
                     batch_size=val_batch_size, permutation_after_epoch=self.FLAGS.batch_permutation, val=True)
                 feed_dict = self.get_feed_dict(batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS,
-                                               batch_yE, 1)
+                                               batch_yE, keep_prob=1)
                 current_loss, predictionS, predictionE = sess.run([self.loss, self.predictionS, self.predictionE],
                                                                   feed_dict=feed_dict)
                 ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE))

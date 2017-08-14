@@ -14,11 +14,11 @@ class DCN_qa_model(Qa_model):
     """
 
     def add_prediction_and_loss(self):
-        coattention_context = self.encode(apply_dropout=False)
+        coattention_context = self.encode(apply_dropout=True)
         prediction_start, prediction_end, loss = self.dp_decode_HMN(coattention_context, apply_dropout=True)
         return prediction_start, prediction_end, loss
 
-    def encode(self, apply_dropout):
+    def encode(self, apply_dropout=False):
         """Coattention context decoder as introduced in https://arxiv.org/abs/1611.01604 
         Simplification: Use GRUs instead of LSTMs. Do not use sentinel vectors. """
         self.WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
@@ -30,8 +30,6 @@ class DCN_qa_model(Qa_model):
         rnn_size = self.FLAGS.rnn_state_size
         with tf.variable_scope("rnn", reuse=None):
             cell = tf.contrib.rnn.GRUCell(rnn_size)
-            if apply_dropout:
-                cell = tf.contrib.rnn.DropoutWrapper(cell,input_keep_prob=self.dropout_placeholder)
             q_sequence_length = tf.reduce_sum(tf.cast(self.q_mask_placeholder, tf.int32), axis=1)
             q_sequence_length = tf.reshape(q_sequence_length, [-1, ])
 
@@ -60,7 +58,7 @@ class DCN_qa_model(Qa_model):
                                                          time_major=False)
 
         D = c_outputs
-        D = tf.transpose(D, [0, 2, 1], name="D")
+        D = tf.transpose(D, [0, 2, 1])
         L = tf.einsum('ijk,ijl->ikl', D, Q)
         AQ = tf.nn.softmax(L)
         AD = tf.nn.softmax(tf.transpose(L, [0, 2, 1]))
@@ -85,7 +83,6 @@ class DCN_qa_model(Qa_model):
         coattention_context = tf.concat([cc_fw, cc_bw], axis=2)
         logging.info("coattention_context={}".format(coattention_context))
         return coattention_context
-
 
     def decode_with_baseline_decoder(self, coattention_context):
         """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary) 
@@ -117,12 +114,11 @@ class DCN_qa_model(Qa_model):
         loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
         return prediction_start, prediction_end, loss
 
-
-
-    def dp_decode_HMN(self, U, pool_size=4, apply_dropout=False, cumulative_loss=False):
+    def dp_decode_HMN(self, U, pool_size=4, apply_dropout=True, cumulative_loss=False):
         """ input: coattention_context. tensor of shape (batch_size, context_length, arbitrary)
         Implementation of dynamic pointer decoder proposed by Xiong et al. ( https://arxiv.org/abs/1611.01604). """
-        def HMN_func(dim, ps): # ps=pool size, HMN = highway maxout network
+
+        def HMN_func(dim, ps):  # ps=pool size, HMN = highway maxout network
             def func(ut, h, us, ue):
                 logging.info("ut={}".format(ut))
                 logging.info("us={}".format(us))
@@ -133,7 +129,7 @@ class DCN_qa_model(Qa_model):
                 logging.info("r={}".format(r))
                 ut_r = tf.concat([ut, r], axis=1)
                 if apply_dropout:
-                    ut_r = tf.nn.dropout(ut_r, keep_prob=self.FLAGS.dropout)
+                    ut_r = tf.nn.dropout(ut_r, keep_prob=self.dropout_placeholder)
                 logging.info("ut_r={}".format(ut_r))
                 W1 = tf.get_variable(name="W1", shape=(3 * dim, dim, ps), dtype='float32',
                                      initializer=xavier_initializer())
@@ -141,30 +137,34 @@ class DCN_qa_model(Qa_model):
                 b1 = tf.get_variable(name="b1", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
                 mt1 = tf.einsum('bt,top->bop', ut_r, W1) + b1
                 mt1 = tf.reduce_max(mt1, axis=2)
+                if apply_dropout:
+                    mt1 = tf.nn.dropout(mt1, self.dropout_placeholder)
                 W2 = tf.get_variable(name="W2", shape=(dim, dim, ps), dtype='float32',
                                      initializer=xavier_initializer())
                 b2 = tf.get_variable(name="b2", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
                 mt2 = tf.einsum('bi,ijp->bjp', mt1, W2) + b2
                 mt2 = tf.reduce_max(mt2, axis=2)
                 mt12 = tf.concat([mt1, mt2], axis=1)
+                if apply_dropout:
+                    mt12 = tf.nn.dropout(mt12, keep_prob=self.dropout_placeholder)
                 W3 = tf.get_variable(name="W3", shape=(2 * dim, 1, ps), dtype='float32',
                                      initializer=xavier_initializer())
                 b3 = tf.get_variable(name="b3", shape=(1, ps), dtype='float32', initializer=tf.zeros_initializer())
                 hmn = tf.einsum('bi,ijp->bjp', mt12, W3) + b3
                 hmn = tf.reduce_max(hmn, axis=2)
-                hmn= tf.reshape(hmn,[-1])
+                hmn = tf.reshape(hmn, [-1])
                 logging.info("hmn={}".format(hmn))
                 return hmn
-            #for debugging:
-            #def func2(ut, h, us, ue):
-            #    return tf.reduce_sum(tf.multiply(ut, us),axis=1)
 
+            # for debugging:
+            # def func2(ut, h, us, ue):
+            #    return tf.reduce_sum(tf.multiply(ut, us),axis=1)
             return func
 
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         dim = self.FLAGS.rnn_state_size
 
-        #initialize us and ue as first word in context
+        # initialize us and ue as first word in context
         i_start = tf.zeros(shape=(tf.shape(U)[0],), dtype='int32')
         i_end = tf.zeros(shape=(tf.shape(U)[0],), dtype='int32')
         idx = tf.range(0, tf.shape(U)[0], 1)
@@ -172,21 +172,21 @@ class DCN_qa_model(Qa_model):
         e_idx = tf.stack([idx, i_end], axis=1)
         us = tf.gather_nd(U, s_idx)
         ue = tf.gather_nd(U, e_idx)
-        #us = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
-        #ue = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
+        # us = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
+        # ue = tf.zeros(shape=(tf.shape(U)[0],2*dim), dtype='float32')
 
 
         HMN_alpha = HMN_func(dim, pool_size)
         HMN_beta = HMN_func(dim, pool_size)
 
         alphas, betas = [], []
-        h = tf.zeros(shape=(tf.shape(U)[0], dim), dtype='float32', name="h_dpd") #initial hidden state of RNN
+        h = tf.zeros(shape=(tf.shape(U)[0], dim), dtype='float32', name="h_dpd")  # initial hidden state of RNN
         U_transpose = tf.transpose(U, [1, 0, 2])
         logging.info("U_transpose={}".format(U_transpose))
 
         with tf.variable_scope("dpd_RNN"):
             cell = tf.contrib.rnn.GRUCell(dim)
-            for time_step in range(3): #for now just one time step. but paper advises around 4
+            for time_step in range(3):  # for now just one time step. but paper advises around 4
                 if time_step >= 1:
                     tf.get_variable_scope().reuse_variables()
 
@@ -200,23 +200,23 @@ class DCN_qa_model(Qa_model):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
                     alpha = tf.map_fn(lambda ut: HMN_alpha(ut, h, us, ue), U_transpose, dtype=tf.float32)
-                    #alpha = tf.reshape(alpha,shape=[tf.shape(U)[0],self.max_c_length]) * float_mask <---- BUG
+                    # alpha = tf.reshape(alpha,shape=[tf.shape(U)[0],self.max_c_length]) * float_mask <---- BUG
                     alpha = tf.transpose(alpha, [1, 0]) * float_mask
 
                 i_start = tf.argmax(alpha, 1)
                 idx = tf.range(0, tf.shape(U)[0], 1)
-                s_idx = tf.stack([idx, tf.cast(i_start,'int32')], axis=1)
+                s_idx = tf.stack([idx, tf.cast(i_start, 'int32')], axis=1)
                 us = tf.gather_nd(U, s_idx)
 
                 with tf.variable_scope("beta_HMN"):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
                     beta = tf.map_fn(lambda ut: HMN_beta(ut, h, us, ue), U_transpose, dtype=tf.float32)
-                    #beta = tf.reshape(beta, shape=[tf.shape(U)[0], self.max_c_length]) * float_mask <---- BUG
-                    beta = tf.transpose(beta,[1,0]) * float_mask
+                    # beta = tf.reshape(beta, shape=[tf.shape(U)[0], self.max_c_length]) * float_mask <---- BUG
+                    beta = tf.transpose(beta, [1, 0]) * float_mask
 
                 i_end = tf.argmax(beta, 1)
-                e_idx = tf.stack([idx, tf.cast(i_end,'int32')], axis=1)
+                e_idx = tf.stack([idx, tf.cast(i_end, 'int32')], axis=1)
                 ue = tf.gather_nd(U, e_idx)
 
                 logging.info("beta={}".format(beta))
@@ -224,13 +224,15 @@ class DCN_qa_model(Qa_model):
 
                 alphas.append(alpha)
                 betas.append(beta)
-            #end loop over time steps
+                # end loop over time steps
         # end of dynamic pointing decoder
 
         if cumulative_loss:
-            losses_alpha = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=a) for a in alphas]
+            losses_alpha = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=a) for a in
+                            alphas]
             losses_alpha = [tf.reduce_mean(x) for x in losses_alpha]
-            losses_beta = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=b) for b in betas]
+            losses_beta = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=b) for b in
+                           betas]
             losses_beta = [tf.reduce_mean(x) for x in losses_beta]
 
             loss = tf.reduce_sum([losses_alpha, losses_beta], name='loss')
@@ -240,7 +242,6 @@ class DCN_qa_model(Qa_model):
             cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=beta,
                                                                         name="cross_entropy_end")
             loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
-
 
         logging.info("loss.shape={}".format(loss.shape))
         return i_start, i_end, loss
@@ -339,7 +340,7 @@ class DCN_qa_model(Qa_model):
                 logging.info("rep_h={}".format(rep_h))
                 x_dnn = tf.concat([x, rep_h], axis=2)
 
-                x_dnn = tf.nn.dropout(x_dnn,keep_prob=self.dropout_placeholder)
+                x_dnn = tf.nn.dropout(x_dnn, keep_prob=self.dropout_placeholder)
 
                 logging.info("x_dnn={}".format(x_dnn))
 
@@ -641,9 +642,9 @@ class DCN_qa_model(Qa_model):
         logging.info("loss.shape={}".format(loss.shape))
         return prediction_start, prediction_end, loss
 
-
     def dp_decode_DNN_for_HMN(self, U, use_argmax=True):
         """ Now really like in the paper. DNN instead of HMN"""
+
         def DNN(U, h, us, ue):
             dim = self.FLAGS.rnn_state_size
             ######## prepare DNN input ########
@@ -664,7 +665,6 @@ class DCN_qa_model(Qa_model):
             x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W) + b)
             logging.info("x_dnn={}".format(x_dnn))
 
-
             ######## layer 2 ########
             W2 = tf.get_variable(name="W2", shape=(dim, dim), dtype='float32',
                                  initializer=tf.contrib.layers.xavier_initializer())
@@ -672,7 +672,6 @@ class DCN_qa_model(Qa_model):
                                  initializer=tf.zeros_initializer())
             x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W2) + b2)
             logging.info("x_dnn={}".format(x_dnn))
-
 
             ######## layer 3 ########
             W3 = tf.get_variable(name="W3", shape=(dim,), dtype='float32',
@@ -682,7 +681,7 @@ class DCN_qa_model(Qa_model):
             x_dnn = tf.nn.relu(tf.einsum('bcd,d->bc', x_dnn, W3) + b3)
 
             ######## return ########
-            #x_dnn = tf.reshape(x_dnn, shape=[-1, self.max_c_length]) * float_mask
+            # x_dnn = tf.reshape(x_dnn, shape=[-1, self.max_c_length]) * float_mask
             logging.info("return x_dnn={}".format(x_dnn))
             return x_dnn
 
@@ -718,14 +717,12 @@ class DCN_qa_model(Qa_model):
         us = tf.gather_nd(U, s_idx)
         ue = tf.gather_nd(U, e_idx)
 
-
-
         alphas, betas = [], []
 
         with tf.variable_scope("dpd_RNN"):
-            #cell = tf.contrib.rnn.GRUCell(dim)
+            # cell = tf.contrib.rnn.GRUCell(dim)
             cell = tf.contrib.rnn.GRUCell(dim)
-            for time_step in range(1): # number of iterations is hyperparameter
+            for time_step in range(1):  # number of iterations is hyperparameter
                 if time_step >= 1:
                     tf.get_variable_scope().reuse_variables()
                 else:
@@ -738,14 +735,14 @@ class DCN_qa_model(Qa_model):
 
                 _, h = cell(us_ue, h)
                 logging.info("h={}".format(h))
-                #h, _ = cell(inputs=us_ue, state=h)
-                h_us_ue = tf.concat([h,us_ue],axis=1)
+                # h, _ = cell(inputs=us_ue, state=h)
+                h_us_ue = tf.concat([h, us_ue], axis=1)
                 logging.info("us_ue={}".format(h_us_ue))
 
                 with tf.variable_scope("alpha_DNN"):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
-                    alpha = DNN(U,h,us,ue) * float_mask
+                    alpha = DNN(U, h, us, ue) * float_mask
 
                 i_start = tf.argmax(alpha, 1)
                 if use_argmax:
@@ -758,15 +755,14 @@ class DCN_qa_model(Qa_model):
                 with tf.variable_scope("beta_DNN"):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
-                    beta = DNN(U,h,us,ue) * float_mask
+                    beta = DNN(U, h, us, ue) * float_mask
 
                 i_end = tf.argmax(beta, 1)
                 if use_argmax:
-                    e_idx = tf.stack([idx, tf.cast(i_end,'int32')], axis=1)
+                    e_idx = tf.stack([idx, tf.cast(i_end, 'int32')], axis=1)
                     ue = tf.gather_nd(U, e_idx)
                 else:
                     ue = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(beta))
-
 
                 logging.info("beta={}".format(beta))
                 logging.info("ue={}".format(ue))
@@ -774,12 +770,14 @@ class DCN_qa_model(Qa_model):
                 alphas.append(alpha)
                 betas.append(beta)
 
-            #end loop over time steps
+                # end loop over time steps
         # end of dynamic pointing decoder
 
-        losses_alpha = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=a) for a in alphas]
+        losses_alpha = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=a) for a in
+                        alphas]
         losses_alpha = [tf.reduce_mean(x) for x in losses_alpha]
-        losses_beta = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=b) for b in betas]
+        losses_beta = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=b) for b in
+                       betas]
         losses_beta = [tf.reduce_mean(x) for x in losses_beta]
 
         logging.info("losses_alpha={}".format(losses_alpha))
@@ -788,4 +786,3 @@ class DCN_qa_model(Qa_model):
 
         logging.info("loss.shape={}".format(loss.shape))
         return i_start, i_end, loss
-
