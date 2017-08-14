@@ -117,15 +117,16 @@ class Qa_model(object):
 
     def add_training_op(self, loss):
         step_adam = tf.Variable(0, trainable=False)
+        lr = tf.constant(self.FLAGS.learning_rate)
         if self.FLAGS.decrease_lr:
             # use adam optimizer with exponentially decaying learning rate
-            rate_adam = tf.train.exponential_decay(self.FLAGS.learning_rate, step_adam, 1, self.FLAGS.lr_d_base)
+            rate_adam = tf.train.exponential_decay(lr, step_adam, 1, self.FLAGS.lr_d_base)
             # after one epoch: # 0.999**2500 = 0.5,  hence learning rate decays by a factor of 0.5 each epoch
             rate_adam = tf.maximum(rate_adam, tf.constant(self.FLAGS.learning_rate / self.FLAGS.lr_divider))
             # should not go down by more than a factor of 2
             optimizer = tf.train.AdamOptimizer(rate_adam)
         else:
-            optimizer = tf.train.AdamOptimizer(self.FLAGS.learning_rate)
+            optimizer = tf.train.AdamOptimizer(tf.constant(lr))
 
         grads_and_vars = optimizer.compute_gradients(loss)
         variables = [output[1] for output in grads_and_vars]
