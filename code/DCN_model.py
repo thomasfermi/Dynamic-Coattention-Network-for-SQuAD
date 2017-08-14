@@ -16,7 +16,7 @@ class DCN_qa_model(Qa_model):
         coattention_context = self.encode()
         # prediction_start, prediction_end, loss = self.dp_decode_fix(coattention_context,
         #                                                            use_argmax=self.FLAGS.use_argmax)
-        prediction_start, prediction_end, loss = self.dp_decode(coattention_context)
+        prediction_start, prediction_end, loss = self.dp_decode_HMN(coattention_context)
         return prediction_start, prediction_end, loss
 
     def encode(self):
@@ -500,36 +500,42 @@ class DCN_qa_model(Qa_model):
 
     def dp_decode_HMN(self, U, pool_size=4):
         """ Now really like in the paper"""
-        def HMN_func(ut, h, us, ue, ps): # ps=pool size
-            logging.info("ut={}".format(ut))
-            logging.info("us={}".format(us))
-            h_us_ue = tf.concat([h, us, ue], axis=1)
-            WD = tf.get_variable(name="WD", shape=(5 * dim, dim), dtype='float32',
-                                 initializer=xavier_initializer())
-            r = tf.nn.tanh(tf.matmul(h_us_ue, WD))
-            logging.info("r={}".format(r))
-            ut_r = tf.concat([ut, r], axis=1)
-            logging.info("ut_r={}".format(ut_r))
-            W1 = tf.get_variable(name="W1", shape=(3 * dim, dim, ps), dtype='float32',
-                                 initializer=xavier_initializer())
-            logging.info("W1={}".format(W1))
-            b1 = tf.get_variable(name="b1", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
-            mt1 = tf.einsum('bt,top->bop', ut_r, W1) + b1
-            mt1 = tf.reduce_max(mt1, axis=2)
-            W2 = tf.get_variable(name="W2", shape=(dim, dim, ps), dtype='float32',
-                                 initializer=xavier_initializer())
-            b2 = tf.get_variable(name="b2", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
-            mt2 = tf.einsum('bi,ijp->bjp', mt1, W2) + b2
-            mt2 = tf.reduce_max(mt2, axis=2)
-            mt12 = tf.concat([mt1, mt2], axis=1)
-            W3 = tf.get_variable(name="W3", shape=(2 * dim, 1, ps), dtype='float32',
-                                 initializer=xavier_initializer())
-            b3 = tf.get_variable(name="b3", shape=(1, ps), dtype='float32', initializer=tf.zeros_initializer())
-            hmn = tf.einsum('bi,ijp->bjp', mt12, W3) + b3
-            hmn = tf.reduce_max(hmn, axis=2)
-            logging.info("hmn={}".format(hmn))
+        def HMN_func(dim, ps): # ps=pool size
+            def func(ut, h, us, ue):
+                logging.info("ut={}".format(ut))
+                logging.info("us={}".format(us))
+                h_us_ue = tf.concat([h, us, ue], axis=1)
+                WD = tf.get_variable(name="WD", shape=(5 * dim, dim), dtype='float32',
+                                     initializer=xavier_initializer())
+                r = tf.nn.tanh(tf.matmul(h_us_ue, WD))
+                logging.info("r={}".format(r))
+                ut_r = tf.concat([ut, r], axis=1)
+                logging.info("ut_r={}".format(ut_r))
+                W1 = tf.get_variable(name="W1", shape=(3 * dim, dim, ps), dtype='float32',
+                                     initializer=xavier_initializer())
+                logging.info("W1={}".format(W1))
+                b1 = tf.get_variable(name="b1", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
+                mt1 = tf.einsum('bt,top->bop', ut_r, W1) + b1
+                mt1 = tf.reduce_max(mt1, axis=2)
+                W2 = tf.get_variable(name="W2", shape=(dim, dim, ps), dtype='float32',
+                                     initializer=xavier_initializer())
+                b2 = tf.get_variable(name="b2", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
+                mt2 = tf.einsum('bi,ijp->bjp', mt1, W2) + b2
+                mt2 = tf.reduce_max(mt2, axis=2)
+                mt12 = tf.concat([mt1, mt2], axis=1)
+                W3 = tf.get_variable(name="W3", shape=(2 * dim, 1, ps), dtype='float32',
+                                     initializer=xavier_initializer())
+                b3 = tf.get_variable(name="b3", shape=(1, ps), dtype='float32', initializer=tf.zeros_initializer())
+                hmn = tf.einsum('bi,ijp->bjp', mt12, W3) + b3
+                hmn = tf.reduce_max(hmn, axis=2)
+                hmn= tf.reshape(hmn,[-1])
+                logging.info("hmn={}".format(hmn))
+                return hmn
+            #for debugging:
+            #def func2(ut, h, us, ue):
+            #    return tf.reduce_sum(tf.multiply(ut, us),axis=1)
 
-            return hmn
+            return func
 
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
         dim = self.FLAGS.rnn_state_size
@@ -550,12 +556,16 @@ class DCN_qa_model(Qa_model):
         h = tf.zeros(shape=(tf.shape(U)[0], dim), dtype='float32', name="h_dpd")
 
         U_transpose = tf.transpose(U,[1,0,2])
+        logging.info("U_transpose={}".format(U_transpose))
+
+        HMN_alpha = HMN_func(dim, pool_size)
+        HMN_beta = HMN_func(dim, pool_size)
 
         alphas, betas = [], []
 
         with tf.variable_scope("dpd_RNN"):
             cell = tf.contrib.rnn.GRUCell(dim)
-            for time_step in range(1):
+            for time_step in range(1): #for now just one time step. but paper advises around 4
                 if time_step >= 1:
                     tf.get_variable_scope().reuse_variables()
 
@@ -564,15 +574,16 @@ class DCN_qa_model(Qa_model):
                 us_ue = tf.concat([us, ue], axis=1)
                 logging.info("us_ue={}".format(us_ue))
 
-                h, _ = cell(inputs=us_ue, state=h)
+                _, h = cell(inputs=us_ue, state=h)
                 h_us_ue = tf.concat([h,us_ue],axis=1)
                 logging.info("us_ue={}".format(h_us_ue))
 
                 with tf.variable_scope("alpha_HMN"):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
-                    alpha = tf.map_fn(lambda ut: HMN_func(ut, h, us, ue, pool_size), U_transpose, dtype=tf.float32)
-                    alpha = tf.reshape(alpha,shape=[-1,self.max_c_length]) * float_mask
+                    alpha = tf.map_fn(lambda ut: HMN_alpha(ut, h, us, ue), U_transpose, dtype=tf.float32)
+                    #alpha = tf.reshape(alpha,shape=[tf.shape(U)[0],self.max_c_length]) * float_mask <---- BUG
+                    alpha = tf.transpose(alpha, [1, 0]) * float_mask
 
                 i_start = tf.argmax(alpha, 1)
                 idx = tf.range(0, tf.shape(U)[0], 1)
@@ -582,8 +593,9 @@ class DCN_qa_model(Qa_model):
                 with tf.variable_scope("beta_HMN"):
                     if time_step >= 1:
                         tf.get_variable_scope().reuse_variables()
-                    beta = tf.map_fn(lambda ut: HMN_func(ut, h, us, ue, pool_size), U_transpose, dtype=tf.float32)
-                    beta = tf.reshape(beta, shape=[-1, self.max_c_length]) * float_mask
+                    beta = tf.map_fn(lambda ut: HMN_beta(ut, h, us, ue), U_transpose, dtype=tf.float32)
+                    #beta = tf.reshape(beta, shape=[tf.shape(U)[0], self.max_c_length]) * float_mask <---- BUG
+                    beta = tf.transpose(beta,[1,0]) * float_mask
 
                 i_end = tf.argmax(beta, 1)
                 e_idx = tf.stack([idx, tf.cast(i_end,'int32')], axis=1)

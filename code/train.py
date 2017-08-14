@@ -12,7 +12,7 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG)
 tf.app.flags.DEFINE_string("model", "baseline", "Choose which model to use baseline/DCN/BIDAF")
-tf.app.flags.DEFINE_string("learning_rate", 0.001, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_integer("batch_size", 32, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 20, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("rnn_state_size", 64, "Size of RNNs used in the model.")

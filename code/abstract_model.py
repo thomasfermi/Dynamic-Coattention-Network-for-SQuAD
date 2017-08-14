@@ -126,7 +126,7 @@ class Qa_model(object):
             # should not go down by more than a factor of 2
             optimizer = tf.train.AdamOptimizer(rate_adam)
         else:
-            optimizer = tf.train.AdamOptimizer(tf.constant(lr))
+            optimizer = tf.train.AdamOptimizer(lr)
 
         grads_and_vars = optimizer.compute_gradients(loss)
         variables = [output[1] for output in grads_and_vars]
