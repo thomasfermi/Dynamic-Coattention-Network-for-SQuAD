@@ -116,9 +116,9 @@ class Qa_model(object):
         raise NotImplementedError("Each Model must re-implement this method.")
 
     def add_training_op(self, loss):
+        step_adam = tf.Variable(0, trainable=False)
         if self.FLAGS.decrease_lr:
             # use adam optimizer with exponentially decaying learning rate
-            step_adam = tf.Variable(0, trainable=False)
             rate_adam = tf.train.exponential_decay(self.FLAGS.learning_rate, step_adam, 1, self.FLAGS.lr_d_base)
             # after one epoch: # 0.999**2500 = 0.5,  hence learning rate decays by a factor of 0.5 each epoch
             rate_adam = tf.maximum(rate_adam, tf.constant(self.FLAGS.learning_rate / self.FLAGS.lr_divider))
