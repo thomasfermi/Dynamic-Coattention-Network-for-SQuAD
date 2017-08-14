@@ -116,16 +116,16 @@ class Qa_model(object):
         raise NotImplementedError("Each Model must re-implement this method.")
 
     def add_training_op(self, loss):
-        # use adam optimizer with exponentially decaying learning rate
-        step_adam = tf.Variable(0, trainable=False)
-        rate_adam = tf.train.exponential_decay(self.FLAGS.learning_rate, step_adam, 1, 0.999)
-        # after one epoch: # 0.999**600 = 0.5,  hence learning rate decays by a factor of 0.5 each epoch
-        rate_adam = tf.maximum(rate_adam,tf.constant(self.FLAGS.learning_rate/5.))
-        # should not go down by more than a factor of 5
-
-        #rate_adam = self.FLAGS.learning_rate
-
-        optimizer = tf.train.AdamOptimizer(rate_adam)
+        if self.FLAGS.decrease_lr:
+            # use adam optimizer with exponentially decaying learning rate
+            step_adam = tf.Variable(0, trainable=False)
+            rate_adam = tf.train.exponential_decay(self.FLAGS.learning_rate, step_adam, 1, self.FLAGS.lr_d_base)
+            # after one epoch: # 0.999**2500 = 0.5,  hence learning rate decays by a factor of 0.5 each epoch
+            rate_adam = tf.maximum(rate_adam, tf.constant(self.FLAGS.learning_rate / self.FLAGS.lr_divider))
+            # should not go down by more than a factor of 2
+            optimizer = tf.train.AdamOptimizer(rate_adam)
+        else:
+            optimizer = tf.train.AdamOptimizer(self.FLAGS.learning_rate)
 
         grads_and_vars = optimizer.compute_gradients(loss)
         variables = [output[1] for output in grads_and_vars]
@@ -315,7 +315,7 @@ class Qa_model(object):
     def train(self):
         sess = tf.Session()
         sess.run(tf.global_variables_initializer())
-        sess.run(tf.local_variables_initializer())
+        #sess.run(tf.local_variables_initializer())
 
         epochs = self.FLAGS.epochs
         batch_size = self.FLAGS.batch_size
