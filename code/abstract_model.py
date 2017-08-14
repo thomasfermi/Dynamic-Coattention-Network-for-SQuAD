@@ -24,7 +24,9 @@ class Qa_model(object):
         self.test_preprocessing_units()
         self.load_and_preprocess_data()
 
-        # self.build_model()
+        # self.build_model() # I put this into the load data function, so that I do not have to wait for the data to
+        # load before I can see that the model has a bug
+        # TODO: Once model is finalized, self.build_model() should be called here
 
     ####################################################################################################################
     ######################## Loading and preprocessing data ############################################################
@@ -39,7 +41,9 @@ class Qa_model(object):
         lines = [line.split() for line in lines]
         line_array, mask_array = [], []
         for line in lines:
-            line = line[:length]
+            line = line[:length]  # TODO: Add code to get rid of data for which len(line)>length.
+            # Note: If the context for one line is not taken, question and answer_span should also not be taken and
+            # vice versa for the question. Priority not too high, because having 0.1% garbage data is not too bad
             add_length = length - len(line)
             mask = [True] * len(line) + add_length * [False]
             line = line + add_length * [pad_value]
@@ -57,7 +61,8 @@ class Qa_model(object):
         S, E = [], []
         for i in range(len(start_ids)):
             labelS, labelE = np.zeros(max_length, dtype=np.int32), np.zeros(max_length, dtype=np.int32)
-            labelS[start_ids[i]], labelE[end_ids[i]] = 1, 1  # one hot encoding
+            if start_ids[i] < max_length and end_ids[i] < max_length:
+                labelS[start_ids[i]], labelE[end_ids[i]] = 1, 1  # one hot encoding
             E.append(labelE)
             S.append(labelS)
         return np.array(S), np.array(E)
@@ -154,7 +159,7 @@ class Qa_model(object):
     ####################################################################################################################
     ######################## Evaluation metrics and plotting (of those metrics) ########################################
     ####################################################################################################################
-    def get_f1(self, yS, yE, ypS, ypE, mask):
+    def get_f1(self, yS, yE, ypS, ypE):
         f1_tot = 0.0
         for i in range(len(yS)):
             y = np.zeros(self.max_c_length)
@@ -169,23 +174,21 @@ class Qa_model(object):
             n_true_pos = np.sum(y * yp)
             n_pred_pos = np.sum(yp)
             n_actual_pos = np.sum(y)
-            if n_true_pos == 0:
-                f1_tot += 0
-            else:
+            if n_true_pos != 0:
                 precision = 1.0 * n_true_pos / n_pred_pos
                 recall = 1.0 * n_true_pos / n_actual_pos
                 f1_tot += (2 * precision * recall) / (precision + recall)
         f1_tot /= len(yS)
         return f1_tot
 
-    def get_exact_match(self, yS, yE, ypS, ypE, mask):
+    def get_exact_match(self, yS, yE, ypS, ypE):
         count = 0
         for i in range(len(yS)):
-            s = np.argmax(yS[i])
-            e = np.argmax(yE[i])
-            if e<s:
-                s,e = e,s # allow flipping between start and end
-            if np.array_equal(s, ypS[i]) and np.array_equal(e, ypE[i]):
+            s, e = np.argmax(yS[i]), np.argmax(yE[i])
+            sp, ep = ypS[i], ypE[i]
+            if sp > ep:
+                sp, ep = ep, sp  # allow flipping between start and end
+            if s == sp and e == ep:
                 count += 1
         match_fraction = count / float(len(yS))
         return match_fraction
@@ -193,11 +196,11 @@ class Qa_model(object):
     def plot_metrics(self, index_epoch, losses, val_losses, EMs, val_Ems, F1s, val_F1s, grad_norms):
         n_data_points = len(losses)
         epoch_axis = np.arange(n_data_points, dtype=np.float32) * index_epoch / float(n_data_points)
-        epoch_axis_val = list(range(index_epoch+1))
+        epoch_axis_val = list(range(index_epoch + 1))
 
         plt.plot(epoch_axis, losses, label="training")
-        plt.plot(epoch_axis_val, [losses[0]]+val_losses, label="validation",marker="x",ms=15) #initial value from training set,
-        # just that we have a nice value for epoch=0 in the plot
+        plt.plot(epoch_axis_val, [losses[0]] + val_losses, label="validation", marker="x", ms=15)
+        # initial value is from training set, just so that we have a nice value for epoch=0 in the plot
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.legend()
@@ -205,7 +208,7 @@ class Qa_model(object):
         plt.close()
 
         plt.plot(epoch_axis, EMs, label="training")
-        plt.plot(epoch_axis_val, [EMs[0]]+val_Ems, label="validation",marker="x",ms=15)
+        plt.plot(epoch_axis_val, [EMs[0]] + val_Ems, label="validation", marker="x", ms=15)
         plt.xlabel("epoch")
         plt.ylabel("EM")
         plt.legend()
@@ -213,7 +216,7 @@ class Qa_model(object):
         plt.close()
 
         plt.plot(epoch_axis, F1s, label="training")
-        plt.plot(epoch_axis_val, [F1s[0]]+val_F1s, label="validation",marker="x",ms=15)
+        plt.plot(epoch_axis_val, [F1s[0]] + val_F1s, label="validation", marker="x", ms=15)
         plt.xlabel("epoch")
         plt.ylabel("F1")
         plt.legend()
@@ -310,13 +313,24 @@ class Qa_model(object):
         os.remove(filename)
         logging.info("read_and_pad passed the test")
 
+        ################## test for get_exact_match and for get_f1 ##################
+        yS = np.array([[0, 0, 1, 0, 0], [1, 0, 0, 0, 0], [0, 0, 0, 0, 1]])
+        yE = np.array([[0, 0, 0, 1, 0], [0, 0, 1, 0, 0], [0, 0, 0, 0, 1]])
+        ypS= np.array([2,0,0],dtype=np.int32)
+        ypE = np.array([3,0,4])
+        assert np.isclose(self.get_exact_match(yS,yE,ypS,ypE), 0.33, atol=0.01)
+        logging.info("get_exact_match passed the test")
+        assert np.isclose(self.get_f1(yS,yE,ypS,ypE), (1+1/2.+1/3.)/3., atol=0.01)
+        logging.info("get_f1 passed the test")
+
+
     ####################################################################################################################
     ######################## Training ##################################################################################
     ####################################################################################################################
     def train(self):
         sess = tf.Session()
         sess.run(tf.global_variables_initializer())
-        #sess.run(tf.local_variables_initializer())
+        # sess.run(tf.local_variables_initializer())
 
         epochs = self.FLAGS.epochs
         batch_size = self.FLAGS.batch_size
@@ -340,8 +354,8 @@ class Qa_model(object):
                     [self.train_op, self.loss, self.predictionS, self.predictionE, self.global_grad_norm,
                      self.optimizer._lr],
                     feed_dict=feed_dict)
-                ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
-                f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
+                ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE))
+                f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE))
                 losses.append(current_loss)
                 grad_norms.append(grad_norm)
 
@@ -358,7 +372,7 @@ class Qa_model(object):
             logging.info("Epoch {} finished. Doing evaluation on validation set...".format(index_epoch))
             self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation,
                                              n_samples=len(self.yvalE))
-            val_batch_size = batch_size # can be a multiple of batch_size, but be sure to not run out of memory
+            val_batch_size = batch_size  # can be a multiple of batch_size, but be sure to not run out of memory
             losses, ems, f1s = [], [], []
             for _ in range(int(len(self.yvalE) / val_batch_size)):
                 batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE = self.next_batch(
@@ -367,8 +381,8 @@ class Qa_model(object):
                                                batch_yE, 1)
                 current_loss, predictionS, predictionE = sess.run([self.loss, self.predictionS, self.predictionE],
                                                                   feed_dict=feed_dict)
-                ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
-                f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE, batch_xc_mask))
+                ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE))
+                f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE))
                 losses.append(current_loss)
 
             loss_on_validation, EM_val, F1_val = np.mean(losses), np.mean(ems), np.mean(f1s)
@@ -379,8 +393,7 @@ class Qa_model(object):
             F1s_val.append(F1_val)
             loss_val.append(loss_on_validation)
 
-
             ############### do some plotting ###############
-            #if index_epoch > 1:
+            # if index_epoch > 1:
             self.plot_metrics(index_epoch, global_losses, loss_val, global_EMs, EMs_val, global_f1s, F1s_val,
-                                  global_grad_norms)
+                              global_grad_norms)
