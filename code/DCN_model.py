@@ -30,6 +30,8 @@ class DCN_qa_model(Qa_model):
         rnn_size = self.FLAGS.rnn_state_size
         with tf.variable_scope("rnn", reuse=None):
             cell = tf.contrib.rnn.GRUCell(rnn_size)
+            if apply_dropout:
+                cell = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob=self.dropout_placeholder)
             q_sequence_length = tf.reduce_sum(tf.cast(self.q_mask_placeholder, tf.int32), axis=1)
             q_sequence_length = tf.reshape(q_sequence_length, [-1, ])
 
@@ -51,7 +53,7 @@ class DCN_qa_model(Qa_model):
         with tf.variable_scope("rnn", reuse=True):
             c_sequence_length = tf.reduce_sum(tf.cast(self.c_mask_placeholder, tf.int32), axis=1)
             c_sequence_length = tf.reshape(c_sequence_length, [-1, ])
-
+            # use the same RNN cell as for the question input
             c_outputs, c_final_state = tf.nn.dynamic_rnn(cell=cell, inputs=self.embedded_c,
                                                          sequence_length=c_sequence_length,
                                                          dtype=tf.float32,
