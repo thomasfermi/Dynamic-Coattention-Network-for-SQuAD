@@ -3,6 +3,7 @@
 
 import tensorflow as tf
 import os
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from simple_baseline_model import Simple_baseline_qa_model
@@ -25,10 +26,6 @@ tf.app.flags.DEFINE_integer("use_argmax", 0, "Only relevant for DCN. Changes the
 tf.app.flags.DEFINE_integer("decrease_lr", 0, "Whether to decrease lr over time")
 tf.app.flags.DEFINE_float("lr_d_base", 0.9997, "Base for the exponential decay of lr")
 tf.app.flags.DEFINE_float("lr_divider", 2, "Due to exp. decay, lr can go down to lr/lr_divider")
-
-
-
-
 
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
@@ -59,7 +56,7 @@ def main(_):
     if FLAGS.model == "baseline":
         model = Simple_baseline_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
     elif FLAGS.model == "DCN":
-        #model = DCN_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
+        # model = DCN_qa_model(max_q_length=65, max_c_length=780, FLAGS=FLAGS)
         model = DCN_qa_model(max_q_length=30, max_c_length=400, FLAGS=FLAGS)
     else:
         raise ValueError("model must be either 'baseline' or 'DCN'")

@@ -10,18 +10,36 @@ import os
 
 
 class Qa_model(object):
-    """This Class has all functionalities of a QuestionAnswering Model, such as preprocessing of data, evaluation 
+    """
+    The general framework of the question answering model is as follows (assuming batch size 1 for easier explanation):
+    
+        - the question or self.q_input_placeholder is a vector of ints like [45 189 1722 7]. Each int corresponds to a 
+        word via a dictionary so [45 189 1722 7] could mean "Where is the cat". 
+        self.c_input_placeholder is similar and contains a context like
+        "On a lovely saturday evening the cat went into the green house. Soon thereafter, it started raining"
+        
+        - The model should predict an answer by using words from the context (in the above example "green house"). It 
+        should give an answer span (10-11 in the above example, counting "On" as word zero), such that indexing the 
+        context with that span would give the answer. We encode the answer span 10-11 into two ints 10,11 and these 
+        into two one hot encodings:
+            labels_placeholderS = [0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0] # a 1 at the 10th position
+            labels_placeholderE = [0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0] # a 1 at the 11th position
+            
+        - Given the q_input_placeholder and c_input_placeholder, the model needs to predict two predictions.
+        prediction_start and prediction_end that should ideally match labels_placeholderS and labels_placeholderE
+        
+    This class has all functionalities of a QuestionAnswering Model, such as preprocessing of data, evaluation 
     metrics, batch processing, training loop etc., but it misses the heart of the model, the  add_prediction_and_loss() 
     method, which actually defines how to go from input X to label y. The method add_prediction_and_loss() must be 
     implemented in a derived class.
     """
 
     def __init__(self, max_q_length, max_c_length, FLAGS):
-        self.max_q_length = max_q_length
+        self.max_q_length = max_q_length  # all questions will be cut or padded to have max_q_length
         self.max_c_length = max_c_length
         self.FLAGS = FLAGS
 
-        self.test_preprocessing_units()
+        self.unit_tests()
         self.load_and_preprocess_data()
 
         # self.build_model() # I put this into the load data function, so that I do not have to wait for the data to
@@ -71,7 +89,7 @@ class Qa_model(object):
         """Read in the Word embedding matrix as well as the question and context paragraphs and bring them into the 
         desired numerical shape."""
 
-        logging.info("Data prep")
+        logging.info("Data prep. This can take some seconds...")
         # load word embedding
         self.WordEmbeddingMatrix = np.load(self.FLAGS.data_dir + "glove.trimmed.100.npz")['glove']
         logging.info("WordEmbeddingMatrix.shape={}".format(self.WordEmbeddingMatrix.shape))
@@ -277,7 +295,7 @@ class Qa_model(object):
     ####################################################################################################################
     ######################## Unit tests ################################################################################
     ####################################################################################################################
-    def test_preprocessing_units(self):
+    def unit_tests(self):
         ################## test for span_to_y ##################
         y = np.array([[1, 2], [2, 4], [1, 1], [0, 0]], dtype=np.int32)
         yS, yE = self.span_to_y(y, 5)
@@ -316,13 +334,12 @@ class Qa_model(object):
         ################## test for get_exact_match and for get_f1 ##################
         yS = np.array([[0, 0, 1, 0, 0], [1, 0, 0, 0, 0], [0, 0, 0, 0, 1]])
         yE = np.array([[0, 0, 0, 1, 0], [0, 0, 1, 0, 0], [0, 0, 0, 0, 1]])
-        ypS= np.array([2,0,0],dtype=np.int32)
-        ypE = np.array([3,0,4])
-        assert np.isclose(self.get_exact_match(yS,yE,ypS,ypE), 0.33, atol=0.01)
+        ypS = np.array([2, 0, 0], dtype=np.int32)
+        ypE = np.array([3, 0, 4])
+        assert np.isclose(self.get_exact_match(yS, yE, ypS, ypE), 0.33, atol=0.01)
         logging.info("get_exact_match passed the test")
-        assert np.isclose(self.get_f1(yS,yE,ypS,ypE), (1+1/2.+1/3.)/3., atol=0.01)
+        assert np.isclose(self.get_f1(yS, yE, ypS, ypE), (1 + 1 / 2. + 1 / 3.) / 3., atol=0.01)
         logging.info("get_f1 passed the test")
-
 
     ####################################################################################################################
     ######################## Training ##################################################################################
