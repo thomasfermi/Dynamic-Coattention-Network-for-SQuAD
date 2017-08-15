@@ -7,14 +7,12 @@ from abstract_model import Qa_model
 class DCN_qa_model(Qa_model):
     """This is an implementation of the Dynamic Coattention Network model (https://arxiv.org/abs/1611.01604) for 
     question answering.    
-    Right now, a simplified DCN encoder is implemented, which uses GRUs instead of LSTMs and 
-    doesn't use sentinel vectors yet. 
-    The dynamic pointer decoder is imlemented as dp_decode_HMN()
+    Right now, a simplified DCN encoder is implemented, which uses GRUs instead of LSTMs and doesn't use sentinel
+    vectors yet. The dynamic pointer decoder is implemented as dp_decode_HMN()
           
     The DCN_qa_model class is derived from the class Qa_model. Read the comment under "class Qa_model" in 
     abstract_model.py to get a general idea of the model framework. If you keep this comment and the arxiv paper at hand
-    you should be able to understand (variables are named as in the paper).
-    For some of the 
+    you should be able to understand the code (variables are named as in the paper, e.g. U,Q,D, etc.).
     """
 
     def add_prediction_and_loss(self):
@@ -23,7 +21,7 @@ class DCN_qa_model(Qa_model):
         return prediction_start, prediction_end, loss
 
     def encode(self, apply_dropout=False):
-        """Coattention context decoder as introduced in https://arxiv.org/abs/1611.01604 
+        """Coattention context encoder as introduced in https://arxiv.org/abs/1611.01604 
         Simplification: Use GRUs instead of LSTMs. Do not use sentinel vectors. """
 
         # Each word is represented by a glove word vector (https://nlp.stanford.edu/projects/glove/)
@@ -203,140 +201,3 @@ class DCN_qa_model(Qa_model):
             loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
 
         return i_start, i_end, loss
-
-    ####################################################################################################################
-    ######## The following two methods are alternative decoders, that performed worse than dp_decode_HMN ###############
-    ####################################################################################################################
-
-    def decode_with_baseline_decoder(self, U):
-        """ input: coattention_context U. tensor of shape (batch_size, context_length, arbitrary) 
-        Decode via simple projection. condition the end_position on the previously determined start_position.
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        !!!!! Note that this simple decoder perfoms significantly worse than the "dp_decode_HMN" !!!!! 
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        """
-        float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
-
-        projector_start = tf.get_variable(name="projectorS", shape=(U.shape[2],), dtype=tf.float32,
-                                          initializer=tf.contrib.layers.xavier_initializer())
-        projector_end = tf.get_variable(name="projectorE", shape=(U.shape[2],), dtype=tf.float32,
-                                        initializer=tf.contrib.layers.xavier_initializer())
-
-        prob_start = tf.einsum('ijk,k->ij', U, projector_start) * float_mask
-        prob_end = tf.einsum('ijk,k->ij', U, projector_end) * float_mask
-        prob_start = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_start)
-        prob_start = prob_start * float_mask
-        prob_end_correlated = tf.concat([prob_end, tf.nn.softmax(prob_start)], axis=1)
-        prob_end_correlated = tf.contrib.keras.layers.Dense(self.max_c_length, activation='linear')(prob_end_correlated)
-        prob_end_correlated = prob_end_correlated * float_mask
-
-        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS,
-                                                                      logits=prob_start,
-                                                                      name="cross_entropy_start")
-        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE,
-                                                                    logits=prob_end_correlated,
-                                                                    name="cross_entropy_end")
-
-        prediction_start = tf.argmax(prob_start, 1)
-        prediction_end = tf.argmax(prob_end_correlated, 1)
-        loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
-        return prediction_start, prediction_end, loss
-
-    def dp_decode(self, U, use_argmax=True):
-        """ input: coattention_context U. tensor of shape (batch_size, context_length, arbitrary)
-        A decoder very similar to the dynamic pointer decoder proposed by Xiong et al. (
-        https://arxiv.org/abs/1611.01604). 
-        
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        !!!!! Note that this turned out to perfom worse than the "dp_decode_HMN" !!!!! 
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        
-        Works as follows (if use_argmax=False):
-        1. Project each hidden vector corresponding to a context word onto a weight vector. This results in a vector 
-        of length=context_length. Apply softmax and interpret as probability that word i in the context is start 
-        word. Use another weight vector to get prob_end.
-        2. sum_i prob_start[i] * hidden_context_vector[i] gives a hidden representation of the start hidden vector, 
-        which we call start_rep. Similarly we find end_rep.
-        3. Use a short RNN (just around 4 timesteps), which is initialized with a hidden state = 0 and does the 
-        following updates:
-        3 (a) h = cell(in=[start_rep, end_rep], h)
-        3 (b) Each context vector gets and appendage: u_c -> [u_c, start_rep, end_rep, h]
-        3 (c) Feed all context vectors through a Multilayer Perceptron, obtaining a matrix of the shape that the initial
-        coattention matrix had. Consider this as new coattention matrix. Get new start_rep and end_rep as in steps 1 
-        and 2. Goto 3 (a)
-        
-        If (use_argmax=False) the implementation is even closer to the DCN paper.
-        """
-        float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
-
-        projector_start = tf.get_variable(name="projectorS", shape=(U.shape[2],), dtype=tf.float32,
-                                          initializer=tf.contrib.layers.xavier_initializer())
-        projector_end = tf.get_variable(name="projectorE", shape=(U.shape[2],), dtype=tf.float32,
-                                        initializer=tf.contrib.layers.xavier_initializer())
-
-        prob_start = tf.einsum('ijk,k->ij', U, projector_start) * float_mask
-        prob_end = tf.einsum('ijk,k->ij', U, projector_end) * float_mask
-
-        if use_argmax:
-            i_start, i_end = tf.argmax(prob_start, 1), tf.argmax(prob_end, 1)
-            i_start, i_end = tf.cast(i_start, 'int32'), tf.cast(i_end, 'int32')
-
-        dim = self.FLAGS.rnn_state_size
-        h = tf.zeros(shape=(tf.shape(U)[0], 2 * dim), dtype='float32', name="h_dpd")
-
-        with tf.variable_scope("dpd_RNN"):
-            cell = tf.contrib.rnn.GRUCell(2 * dim)
-            for time_step in range(4):
-                if time_step >= 1:
-                    tf.get_variable_scope().reuse_variables()
-
-                # find start_rep using prob_start (or if use_argmax==True using i_start)
-                if use_argmax:
-                    idx = tf.range(0, tf.shape(U)[0], 1)
-                    s_idx = tf.stack([idx, i_start], axis=1)
-                    e_idx = tf.stack([idx, i_end], axis=1)
-                    start_rep = tf.gather_nd(U, s_idx)
-                    end_rep = tf.gather_nd(U, e_idx)
-                else:  # fold with probability distribution instead of picking one single vector
-                    start_rep = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(prob_start))
-                    end_rep = tf.einsum('bcd,bc->bd', U, tf.nn.softmax(prob_end))
-
-                rep = tf.concat([start_rep, end_rep], axis=1)
-                h, _ = cell(inputs=rep, state=h)
-                rep_h = tf.concat([start_rep, end_rep, h], axis=1)
-                rep_h = tf.tile(rep_h, [1, tf.shape(U)[1]])
-                rep_h = tf.reshape(rep_h, [tf.shape(U)[0], tf.shape(U)[1], 6 * dim])
-                x_dnn = tf.concat([U, rep_h], axis=2)
-                x_dnn = tf.nn.dropout(x_dnn, keep_prob=self.dropout_placeholder)
-
-                W = tf.get_variable(name="W1", shape=(8 * dim, 4 * dim), dtype='float32',
-                                    initializer=tf.contrib.layers.xavier_initializer())
-                b = tf.get_variable(name="b1", shape=(4 * dim,), dtype='float32',
-                                    initializer=tf.contrib.layers.xavier_initializer())
-                x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W) + b)
-                # TODO: add dropout
-                W2 = tf.get_variable(name="W2", shape=(4 * dim, 2 * dim), dtype='float32',
-                                     initializer=tf.contrib.layers.xavier_initializer())
-                b2 = tf.get_variable(name="b2", shape=(2 * dim,), dtype='float32',
-                                     initializer=tf.contrib.layers.xavier_initializer())
-                x_dnn = tf.nn.relu(tf.einsum('bcd,dn->bcn', x_dnn, W2) + b2)
-
-                prob_start = tf.einsum('ijk,k->ij', x_dnn, projector_start) * float_mask
-                prob_end = tf.einsum('ijk,k->ij', x_dnn, projector_end) * float_mask
-
-                if use_argmax:
-                    i_start, i_end = tf.argmax(prob_start, 1), tf.argmax(prob_end, 1)
-                    i_start, i_end = tf.cast(i_start, 'int32'), tf.cast(i_end, 'int32')
-
-        cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS,
-                                                                      logits=prob_start,
-                                                                      name="cross_entropy_start")
-        cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE,
-                                                                    logits=prob_end,
-                                                                    name="cross_entropy_end")
-
-        prediction_start = tf.argmax(prob_start, 1)
-        prediction_end = tf.argmax(prob_end, 1)
-
-        loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
-        return prediction_start, prediction_end, loss
