@@ -35,8 +35,6 @@ class DCN_qa_model(Qa_model):
         rnn_size = self.FLAGS.rnn_state_size
         with tf.variable_scope("rnn", reuse=None):
             cell = tf.contrib.rnn.GRUCell(rnn_size)
-            if apply_dropout:
-                cell = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob=self.dropout_placeholder)
             q_sequence_length = tf.reduce_sum(tf.cast(self.q_mask_placeholder, tf.int32), axis=1)
             q_sequence_length = tf.reshape(q_sequence_length, [-1, ])
 
@@ -80,8 +78,10 @@ class DCN_qa_model(Qa_model):
             cell_fw = tf.contrib.rnn.GRUCell(rnn_size)
             cell_bw = tf.contrib.rnn.GRUCell(rnn_size)
             if apply_dropout:
-                cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, input_keep_prob=self.dropout_placeholder)
-                cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, input_keep_prob=self.dropout_placeholder)
+                # TODO add separate dropout placeholder for encoding and decoding.
+                enc_keep_prob = tf.maximum(tf.constant(0.9), self.dropout_placeholder)
+                cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, input_keep_prob=enc_keep_prob)
+                cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, input_keep_prob=enc_keep_prob)
 
             (cc_fw, cc_bw), _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, inputs=CDprime,
                                                                 sequence_length=c_sequence_length,
@@ -91,7 +91,7 @@ class DCN_qa_model(Qa_model):
         logging.info("U={}".format(U))
         return U
 
-    def dp_decode_HMN(self, U, pool_size=4, apply_dropout=True, cumulative_loss=False):
+    def dp_decode_HMN(self, U, pool_size=4, apply_dropout=True, cumulative_loss=True):
         """ input: coattention_context U. tensor of shape (batch_size, context_length, arbitrary)
         Implementation of dynamic pointer decoder proposed by Xiong et al. ( https://arxiv.org/abs/1611.01604).
          
@@ -153,7 +153,7 @@ class DCN_qa_model(Qa_model):
 
         with tf.variable_scope("dpd_RNN"):
             cell = tf.contrib.rnn.GRUCell(dim)
-            for time_step in range(3):  # This can be considered as a hyper parameter
+            for time_step in range(3):  # number of time steps can be considered as a hyper parameter
                 if time_step >= 1:
                     tf.get_variable_scope().reuse_variables()
 
