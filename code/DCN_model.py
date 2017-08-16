@@ -89,7 +89,7 @@ class DCN_qa_model(Qa_model):
                                                                 dtype=tf.float32)
 
         U = tf.concat([cc_fw, cc_bw], axis=2)
-        logging.info("U={}".format(U))
+        logging.debug("U={}".format(U))
         return U
 
     def dp_decode_HMN(self, U, pool_size=4, apply_dropout=True, cumulative_loss=True):

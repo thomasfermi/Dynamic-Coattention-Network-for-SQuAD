@@ -38,13 +38,11 @@ class Qa_model(object):
         self.max_q_length = max_q_length  # all questions will be cut or padded to have max_q_length
         self.max_c_length = max_c_length
         self.FLAGS = FLAGS
+        logging.getLogger().setLevel(logging.INFO)
 
         self.unit_tests()
         self.load_and_preprocess_data()
-
-        # self.build_model() # I put this into the load data function, so that I do not have to wait for the data to
-        # load before I can see that the model has a bug
-        # TODO: Once model is finalized, self.build_model() should be called here
+        self.build_model()
 
     ####################################################################################################################
     ######################## Loading and preprocessing data ############################################################
@@ -89,17 +87,15 @@ class Qa_model(object):
         """Read in the Word embedding matrix as well as the question and context paragraphs and bring them into the 
         desired numerical shape."""
 
-        logging.info("Data prep. This can take some seconds...")
+        logging.info("Data preparation. This can take some seconds...")
         # load word embedding
         self.WordEmbeddingMatrix = np.load(self.FLAGS.data_dir + "glove.trimmed.100.npz")['glove']
-        logging.info("WordEmbeddingMatrix.shape={}".format(self.WordEmbeddingMatrix.shape))
+        logging.debug("WordEmbeddingMatrix.shape={}".format(self.WordEmbeddingMatrix.shape))
         null_wordvec_index = self.WordEmbeddingMatrix.shape[0]
         # append a zero vector to WordEmbeddingMatrix, which shall be used as padding value
         self.WordEmbeddingMatrix = np.vstack((self.WordEmbeddingMatrix, np.zeros(100)))
         self.WordEmbeddingMatrix = self.WordEmbeddingMatrix.astype(np.float32)
-        logging.info("WordEmbeddingMatrix.shape after appending zero vector={}".format(self.WordEmbeddingMatrix.shape))
-
-        self.build_model()
+        logging.debug("WordEmbeddingMatrix.shape after appending zero vector={}".format(self.WordEmbeddingMatrix.shape))
 
         # load contexts, questions and labels
         self.yS, self.yE = self.span_to_y(np.loadtxt(self.FLAGS.data_dir + "train.span", dtype=np.int32))
@@ -113,7 +109,7 @@ class Qa_model(object):
                                                     null_wordvec_index)
         self.Xval_q, self.Xval_q_mask = self.read_and_pad(self.FLAGS.data_dir + "val.ids.question", self.max_q_length,
                                                           null_wordvec_index)
-        logging.info("End data prep")
+        logging.info("End data preparation.")
 
     ####################################################################################################################
     ######################## Model building ############################################################################
@@ -310,7 +306,7 @@ class Qa_model(object):
 
         assert np.array_equal(yS[3], np.array([1, 0, 0, 0, 0], dtype=np.int32))
         assert np.array_equal(yE[3], np.array([1, 0, 0, 0, 0], dtype=np.int32))
-        logging.info("span_to_y passed the test")
+        logging.debug("span_to_y passed the test")
 
         ################## test for read and pad ##################
         filename = "unit_test_train.ids.context"
@@ -329,7 +325,7 @@ class Qa_model(object):
         assert np.array_equal(c, c_as_should_be)
         assert np.array_equal(c_mask, c_mask_as_should_be)
         os.remove(filename)
-        logging.info("read_and_pad passed the test")
+        logging.debug("read_and_pad passed the test")
 
         ################## test for get_exact_match and for get_f1 ##################
         yS = np.array([[0, 0, 1, 0, 0], [1, 0, 0, 0, 0], [0, 0, 0, 0, 1]])
@@ -337,9 +333,9 @@ class Qa_model(object):
         ypS = np.array([2, 0, 0], dtype=np.int32)
         ypE = np.array([3, 0, 4])
         assert np.isclose(self.get_exact_match(yS, yE, ypS, ypE), 0.33, atol=0.01)
-        logging.info("get_exact_match passed the test")
+        logging.debug("get_exact_match passed the test")
         assert np.isclose(self.get_f1(yS, yE, ypS, ypE), (1 + 1 / 2. + 1 / 3.) / 3., atol=0.01)
-        logging.info("get_f1 passed the test")
+        logging.debug("get_f1 passed the test")
 
     ####################################################################################################################
     ######################## Training ##################################################################################
