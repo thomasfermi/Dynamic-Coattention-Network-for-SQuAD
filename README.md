@@ -4,9 +4,10 @@ The data in the data/squad folder was downloaded and preprocessed via the starte
 
 If you just want to have a look at the DCN implementation check out [DCN\_model.py](code/DCN_model.py), it is only around 200 lines long.
 
-To implement the model I had to get used to some tensorfow functions like tf.gather\_nd and tf.map\_fn. I did my experiments with these functions on toy data in [this notebook](Experimentation_Notebooks/toy_data_examples_for_tile_map_fn_gather_nd_etc.ipynb) in the Experimentation\_Notebooks folder.
+To implement the model I had to explore some tensorfow functions like tf.gather\_nd and tf.map\_fn. I did my experiments with these functions on toy data in [this notebook](Experimentation_Notebooks/toy_data_examples_for_tile_map_fn_gather_nd_etc.ipynb) in the Experimentation\_Notebooks folder.
 
-The best result so far is 41% EM (exact match) and 59% F1 score on the validation set with the DCN\_model. Training was started via
+The best result so far is 43% EM (exact match) and 60% F1 score on the validation set. Training was started via
 ```bash
-python code/train.py --batch_size=64 --rnn_state_size=150 --figure_directory=fig_HMN_3steps_drop_07/ --dropout=0.7
+python code/train.py --batch_size=64 --rnn_state_size=150 --dropout=0.6
 ```
+The hyperparameter search is not finished. With the above parameters the model is still overfitting.
