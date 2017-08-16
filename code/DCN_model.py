@@ -79,6 +79,7 @@ class DCN_qa_model(Qa_model):
             cell_bw = tf.contrib.rnn.GRUCell(rnn_size)
             if apply_dropout:
                 # TODO add separate dropout placeholder for encoding and decoding.
+                # Note to self: with 0.9 model was still overfitting, try 0.8 or 0.7 next. 0.6 for decoder is good.
                 enc_keep_prob = tf.maximum(tf.constant(0.9), self.dropout_placeholder)
                 cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, input_keep_prob=enc_keep_prob)
                 cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, input_keep_prob=enc_keep_prob)
