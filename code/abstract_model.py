@@ -28,8 +28,8 @@ class Qa_model(object):
         - Given the q_input_placeholder and c_input_placeholder, the model needs to predict two predictions.
         prediction_start and prediction_end that should ideally match labels_placeholderS and labels_placeholderE
         
-    This class has all functionalities of a QuestionAnswering Model, such as preprocessing of data, evaluation 
-    metrics, batch processing, training loop etc., but it misses the heart of the model, the  add_prediction_and_loss() 
+    This class Qa_model has all functionalities of a QuestionAnswering Model, such as preprocessing of data, evaluation 
+    metrics, batch processing, training loop etc., but it misses the heart of the model: the  add_prediction_and_loss() 
     method, which actually defines how to go from input X to label y. The method add_prediction_and_loss() must be 
     implemented in a derived class.
     """
@@ -43,6 +43,9 @@ class Qa_model(object):
         self.unit_tests()
         self.load_and_preprocess_data()
         self.build_model()
+
+    def add_prediction_and_loss(self):
+        raise NotImplementedError("Each Model must re-implement this method.")
 
     ####################################################################################################################
     ######################## Loading and preprocessing data ############################################################
@@ -130,9 +133,6 @@ class Qa_model(object):
         self.labels_placeholderE = tf.placeholder(tf.int32, (None, self.max_c_length), name="label_phE")
 
         self.dropout_placeholder = tf.placeholder(tf.float32, name="dropout_ph")
-
-    def add_prediction_and_loss(self):
-        raise NotImplementedError("Each Model must re-implement this method.")
 
     def add_training_op(self, loss):
         step_adam = tf.Variable(0, trainable=False)

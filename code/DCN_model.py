@@ -7,17 +7,19 @@ from abstract_model import Qa_model
 class DCN_qa_model(Qa_model):
     """This is an implementation of the Dynamic Coattention Network model (https://arxiv.org/abs/1611.01604) for 
     question answering.    
-    Right now, a simplified DCN encoder is implemented, which uses GRUs instead of LSTMs and doesn't use sentinel
-    vectors yet. The dynamic pointer decoder is implemented as dp_decode_HMN()
+    Right now, a slightly simplified DCN encoder is implemented, which uses GRUs instead of LSTMs and doesn't use 
+    sentinel vectors yet.
           
     The DCN_qa_model class is derived from the class Qa_model. Read the comment under "class Qa_model" in 
-    abstract_model.py to get a general idea of the model framework. If you keep this comment and the arxiv paper at hand
-    you should be able to understand the code (variables are named as in the paper, e.g. U,Q,D, etc.).
+    abstract_model.py to get a general idea of the model framework. 
+    To understand the DCN model architecture and some variable names in the code (like U,Q,D), you need to read the 
+    original paper (https://arxiv.org/abs/1611.01604).
     """
 
     def add_prediction_and_loss(self):
-        coattention_context = self.encode(apply_dropout=True)
-        prediction_start, prediction_end, loss = self.dp_decode_HMN(coattention_context, apply_dropout=True)
+        coattention_context = self.encode(apply_dropout=False)
+        prediction_start, prediction_end, loss = self.dp_decode_HMN(coattention_context, apply_dropout=False,
+                                                                    apply_l2_reg=True)
         return prediction_start, prediction_end, loss
 
     def encode(self, apply_dropout=False):
@@ -28,7 +30,7 @@ class DCN_qa_model(Qa_model):
         self.WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
                                    trainable=False)
 
-        # map word index (integer) two word vector (100 dimensional float vector)
+        # map word index (integer) to word vector (100 dimensional float vector)
         self.embedded_q = tf.nn.embedding_lookup(params=self.WEM, ids=self.q_input_placeholder)
         self.embedded_c = tf.nn.embedding_lookup(params=self.WEM, ids=self.c_input_placeholder)
 
@@ -92,7 +94,7 @@ class DCN_qa_model(Qa_model):
         logging.debug("U={}".format(U))
         return U
 
-    def dp_decode_HMN(self, U, pool_size=4, apply_dropout=True, cumulative_loss=True):
+    def dp_decode_HMN(self, U, pool_size=4, apply_dropout=True, cumulative_loss=True, apply_l2_reg=False):
         """ input: coattention_context U. tensor of shape (batch_size, context_length, arbitrary)
         Implementation of dynamic pointer decoder proposed by Xiong et al. ( https://arxiv.org/abs/1611.01604).
          
@@ -200,5 +202,8 @@ class DCN_qa_model(Qa_model):
             cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=beta,
                                                                         name="cross_entropy_end")
             loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
+
+        if apply_l2_reg:
+            loss += tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.FLAGS.l2_lambda
 
         return i_start, i_end, loss
