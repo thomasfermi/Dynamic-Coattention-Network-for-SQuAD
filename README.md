@@ -6,15 +6,17 @@ If you just want to have a look at the DCN implementation check out [DCN\_model.
 
 To implement the model I had to explore some tensorflow functions like tf.gather\_nd and tf.map\_fn. I did my experiments with these functions on toy data in [this notebook](Experimentation_Notebooks/toy_data_examples_for_tile_map_fn_gather_nd_etc.ipynb) in the Experimentation\_Notebooks folder.
 
-To track the 300 dimensional word vectors I used [git lfs](https://git-lfs.github.com/). You can download them via ```git lfs pull```
-
 The best result so far is 43% EM (exact match) and 60% F1 score on the validation set. Training was started via
 ```bash
 python code/train.py --batch_size=64 --rnn_state_size=150 --dropout=0.6
 ```
+
+Note:
+
+- To track the 300 dimensional word vectors I used [git lfs](https://git-lfs.github.com/). You will need [git lfs](https://git-lfs.github.com/) to download them.
+
 TODO:
 
-- The hyperparameter search is not finished.
-- Word vectors of dimension 300 instead of 100 should increase performance.
+- The hyperparameter search is not finished (e.g.: How much can using 300 dimensional word vectors improve performance compared to 100 dimensional word vectors?)
 - LSTMs instead of GRUs should slightly enhance performance. 
 - Sentinel vectors need to be implemented.
