@@ -50,7 +50,7 @@ class DCN_qa_model(Qa_model):
         # add tanh layer to go from Qprime to Q
         WQ = tf.get_variable("WQ", (self.max_q_length, self.max_q_length),
                              initializer=tf.contrib.layers.xavier_initializer())
-        bQ = tf.get_variable("bQ", shape=(rnn_size, self.max_q_length),
+        bQ = tf.get_variable("bQ_Bias", shape=(rnn_size, self.max_q_length),
                              initializer=tf.contrib.layers.xavier_initializer())
         Q = tf.einsum('ijk,kl->ijl', Qprime, WQ)
         Q = tf.nn.tanh(Q + bQ, name="Q")
@@ -112,14 +112,14 @@ class DCN_qa_model(Qa_model):
                     ut_r = tf.nn.dropout(ut_r, keep_prob=self.dropout_placeholder)
                 W1 = tf.get_variable(name="W1", shape=(3 * dim, dim, ps), dtype='float32',
                                      initializer=xavier_initializer())
-                b1 = tf.get_variable(name="b1", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
+                b1 = tf.get_variable(name="b1_Bias", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
                 mt1 = tf.einsum('bt,top->bop', ut_r, W1) + b1
                 mt1 = tf.reduce_max(mt1, axis=2)
                 if apply_dropout:
                     mt1 = tf.nn.dropout(mt1, self.dropout_placeholder)
                 W2 = tf.get_variable(name="W2", shape=(dim, dim, ps), dtype='float32',
                                      initializer=xavier_initializer())
-                b2 = tf.get_variable(name="b2", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
+                b2 = tf.get_variable(name="b2_Bias", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
                 mt2 = tf.einsum('bi,ijp->bjp', mt1, W2) + b2
                 mt2 = tf.reduce_max(mt2, axis=2)
                 mt12 = tf.concat([mt1, mt2], axis=1)
@@ -127,7 +127,7 @@ class DCN_qa_model(Qa_model):
                     mt12 = tf.nn.dropout(mt12, keep_prob=self.dropout_placeholder)
                 W3 = tf.get_variable(name="W3", shape=(2 * dim, 1, ps), dtype='float32',
                                      initializer=xavier_initializer())
-                b3 = tf.get_variable(name="b3", shape=(1, ps), dtype='float32', initializer=tf.zeros_initializer())
+                b3 = tf.get_variable(name="b3_Bias", shape=(1, ps), dtype='float32', initializer=tf.zeros_initializer())
                 hmn = tf.einsum('bi,ijp->bjp', mt12, W3) + b3
                 hmn = tf.reduce_max(hmn, axis=2)
                 hmn = tf.reshape(hmn, [-1])
@@ -195,7 +195,7 @@ class DCN_qa_model(Qa_model):
                            betas]
             losses_beta = [tf.reduce_mean(x) for x in losses_beta]
 
-            loss = tf.reduce_sum([losses_alpha, losses_beta], name='loss')
+            loss = tf.reduce_sum([losses_alpha, losses_beta])
         else:
             cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=alpha,
                                                                           name="cross_entropy_start")
@@ -204,6 +204,7 @@ class DCN_qa_model(Qa_model):
             loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
 
         if apply_l2_reg:
-            loss += tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.FLAGS.l2_lambda
+            loss_l2 = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables() if "Bias" not in v.name])
+            loss += loss_l2 * self.FLAGS.l2_lambda
 
         return i_start, i_end, loss
