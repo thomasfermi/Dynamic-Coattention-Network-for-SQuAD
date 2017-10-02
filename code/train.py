@@ -12,7 +12,9 @@ tf.app.flags.DEFINE_integer("batch_size", 32, "Batch size to use during training
 tf.app.flags.DEFINE_integer("epochs", 20, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("rnn_state_size", 64, "Size of RNNs used in the model.")
 tf.app.flags.DEFINE_string("figure_directory", "figs/", "Directory in which figures are stored.")
-tf.app.flags.DEFINE_float("dropout", 0.8, "1-Fraction of units randomly dropped on non-recurrent connections.")
+tf.app.flags.DEFINE_integer("word_vec_dim", 100, "Dimension of word vectors. Either 100 or 300")
+tf.app.flags.DEFINE_float("dropout", 0.6, "1-Fraction of units randomly dropped.")
+tf.app.flags.DEFINE_float("dropout_encoder", 0.7, "1-Fraction of units randomly dropped in the encoder.")
 tf.app.flags.DEFINE_float("l2_lambda", 0.01, "Hyperparameter for l2 regularization.")
 tf.app.flags.DEFINE_string("batch_permutation", "random",
                            "Choose whether training data is shuffled ('random'), ordered by length ('by_length'), "

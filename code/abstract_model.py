@@ -12,22 +12,22 @@ import os
 class Qa_model(object):
     """
     The general framework of the question answering model is as follows (assuming batch size 1 for easier explanation):
-    
+
         - the question or self.q_input_placeholder is a vector of ints like [45 189 1722 7]. Each int corresponds to a 
         word via a dictionary so [45 189 1722 7] could mean "Where is the cat". 
         self.c_input_placeholder is similar and contains a context like
         "On a lovely saturday evening the cat went into the green house. Soon thereafter, it started raining"
-        
+
         - The model should predict an answer by using words from the context (in the above example "green house"). It 
         should give an answer span (10-11 in the above example, counting "On" as word zero), such that indexing the 
         context with that span would give the answer. We encode the answer span 10-11 into two ints 10,11 and these 
         into two one hot encodings:
             labels_placeholderS = [0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0] # a 1 at the 10th position
             labels_placeholderE = [0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0] # a 1 at the 11th position
-            
+
         - Given the q_input_placeholder and c_input_placeholder, the model needs to predict two predictions.
         prediction_start and prediction_end that should ideally match labels_placeholderS and labels_placeholderE
-        
+
     This class Qa_model has all functionalities of a QuestionAnswering Model, such as preprocessing of data, evaluation 
     metrics, batch processing, training loop etc., but it misses the heart of the model: the  add_prediction_and_loss() 
     method, which actually defines how to go from input X to label y. The method add_prediction_and_loss() must be 
@@ -92,7 +92,12 @@ class Qa_model(object):
 
         logging.info("Data preparation. This can take some seconds...")
         # load word embedding
-        self.WordEmbeddingMatrix = np.load(self.FLAGS.data_dir + "glove.trimmed.100.npz")['glove']
+        if self.FLAGS.word_vec_dim == 300:
+            self.WordEmbeddingMatrix = np.load(self.FLAGS.data_dir + "glove.trimmed.300.npz")['glove']
+        elif self.FLAGS.word_vec_dim == 100:
+            self.WordEmbeddingMatrix = np.load(self.FLAGS.data_dir + "glove.trimmed.100.npz")['glove']
+        else:
+            raise ValueError("word_vec_dim can be either 100 or 300")
         logging.debug("WordEmbeddingMatrix.shape={}".format(self.WordEmbeddingMatrix.shape))
         null_wordvec_index = self.WordEmbeddingMatrix.shape[0]
         # append a zero vector to WordEmbeddingMatrix, which shall be used as padding value

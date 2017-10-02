@@ -9,7 +9,7 @@ class DCN_qa_model(Qa_model):
     question answering.    
     Right now, a slightly simplified DCN encoder is implemented, which uses GRUs instead of LSTMs and doesn't use 
     sentinel vectors yet.
-          
+
     The DCN_qa_model class is derived from the class Qa_model. Read the comment under "class Qa_model" in 
     abstract_model.py to get a general idea of the model framework. 
     To understand the DCN model architecture and some variable names in the code (like U,Q,D), you need to read the 
@@ -17,9 +17,9 @@ class DCN_qa_model(Qa_model):
     """
 
     def add_prediction_and_loss(self):
-        coattention_context = self.encode(apply_dropout=False)
-        prediction_start, prediction_end, loss = self.dp_decode_HMN(coattention_context, apply_dropout=False,
-                                                                    apply_l2_reg=True)
+        coattention_context = self.encode(apply_dropout=True)
+        prediction_start, prediction_end, loss = self.dp_decode_HMN(coattention_context, apply_dropout=True,
+                                                                    apply_l2_reg=False)
         return prediction_start, prediction_end, loss
 
     def encode(self, apply_dropout=False):
@@ -80,9 +80,10 @@ class DCN_qa_model(Qa_model):
             cell_fw = tf.contrib.rnn.GRUCell(rnn_size)
             cell_bw = tf.contrib.rnn.GRUCell(rnn_size)
             if apply_dropout:
-                # TODO add separate dropout placeholder for encoding and decoding.
+                # TODO add separate dropout placeholder for encoding and decoding. Right now the maximum sets
+                # enc_keep_prob to 1 during prediction.
                 # Note to self: with 0.9 model was still overfitting, try 0.8 or 0.7 next. 0.6 for decoder is good.
-                enc_keep_prob = tf.maximum(tf.constant(0.9), self.dropout_placeholder)
+                enc_keep_prob = tf.maximum(tf.constant(self.FLAGS.dropout_encoder), self.dropout_placeholder)
                 cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, input_keep_prob=enc_keep_prob)
                 cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, input_keep_prob=enc_keep_prob)
 
@@ -97,7 +98,7 @@ class DCN_qa_model(Qa_model):
     def dp_decode_HMN(self, U, pool_size=4, apply_dropout=True, cumulative_loss=True, apply_l2_reg=False):
         """ input: coattention_context U. tensor of shape (batch_size, context_length, arbitrary)
         Implementation of dynamic pointer decoder proposed by Xiong et al. ( https://arxiv.org/abs/1611.01604).
-         
+
         Some of the implementation details such as the way us is obained from U via tf.gather_nd() are explored on toy 
         data in Experimentation_Notebooks/toy_data_examples_for_tile_map_fn_gather_nd_etc.ipynb"""
 
@@ -112,14 +113,16 @@ class DCN_qa_model(Qa_model):
                     ut_r = tf.nn.dropout(ut_r, keep_prob=self.dropout_placeholder)
                 W1 = tf.get_variable(name="W1", shape=(3 * dim, dim, ps), dtype='float32',
                                      initializer=xavier_initializer())
-                b1 = tf.get_variable(name="b1_Bias", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
+                b1 = tf.get_variable(name="b1_Bias", shape=(dim, ps), dtype='float32',
+                                     initializer=tf.zeros_initializer())
                 mt1 = tf.einsum('bt,top->bop', ut_r, W1) + b1
                 mt1 = tf.reduce_max(mt1, axis=2)
                 if apply_dropout:
                     mt1 = tf.nn.dropout(mt1, self.dropout_placeholder)
                 W2 = tf.get_variable(name="W2", shape=(dim, dim, ps), dtype='float32',
                                      initializer=xavier_initializer())
-                b2 = tf.get_variable(name="b2_Bias", shape=(dim, ps), dtype='float32', initializer=tf.zeros_initializer())
+                b2 = tf.get_variable(name="b2_Bias", shape=(dim, ps), dtype='float32',
+                                     initializer=tf.zeros_initializer())
                 mt2 = tf.einsum('bi,ijp->bjp', mt1, W2) + b2
                 mt2 = tf.reduce_max(mt2, axis=2)
                 mt12 = tf.concat([mt1, mt2], axis=1)
