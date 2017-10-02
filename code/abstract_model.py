@@ -101,7 +101,7 @@ class Qa_model(object):
         logging.debug("WordEmbeddingMatrix.shape={}".format(self.WordEmbeddingMatrix.shape))
         null_wordvec_index = self.WordEmbeddingMatrix.shape[0]
         # append a zero vector to WordEmbeddingMatrix, which shall be used as padding value
-        self.WordEmbeddingMatrix = np.vstack((self.WordEmbeddingMatrix, np.zeros(100)))
+        self.WordEmbeddingMatrix = np.vstack((self.WordEmbeddingMatrix, np.zeros(self.FLAGS.word_vec_dim)))
         self.WordEmbeddingMatrix = self.WordEmbeddingMatrix.astype(np.float32)
         logging.debug("WordEmbeddingMatrix.shape after appending zero vector={}".format(self.WordEmbeddingMatrix.shape))
 
