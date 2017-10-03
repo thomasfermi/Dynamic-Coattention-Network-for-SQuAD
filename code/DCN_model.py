@@ -37,6 +37,11 @@ class DCN_qa_model(Qa_model):
         rnn_size = self.FLAGS.rnn_state_size
         with tf.variable_scope("rnn", reuse=None):
             cell = tf.contrib.rnn.GRUCell(rnn_size)
+            if apply_dropout:
+                # TODO add separate dropout placeholder for encoding and decoding. Right now the maximum sets
+                # enc_keep_prob to 1 during prediction.
+                enc_keep_prob = tf.maximum(tf.constant(self.FLAGS.dropout_encoder), self.dropout_placeholder)
+                cell = tf.contrib.rnn.DropoutWrapper(cell, output_keep_prob=enc_keep_prob)
             q_sequence_length = tf.reduce_sum(tf.cast(self.q_mask_placeholder, tf.int32), axis=1)
             q_sequence_length = tf.reshape(q_sequence_length, [-1, ])
 
@@ -80,10 +85,6 @@ class DCN_qa_model(Qa_model):
             cell_fw = tf.contrib.rnn.GRUCell(rnn_size)
             cell_bw = tf.contrib.rnn.GRUCell(rnn_size)
             if apply_dropout:
-                # TODO add separate dropout placeholder for encoding and decoding. Right now the maximum sets
-                # enc_keep_prob to 1 during prediction.
-                # Note to self: with 0.9 model was still overfitting, try 0.8 or 0.7 next. 0.6 for decoder is good.
-                enc_keep_prob = tf.maximum(tf.constant(self.FLAGS.dropout_encoder), self.dropout_placeholder)
                 cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, input_keep_prob=enc_keep_prob)
                 cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, input_keep_prob=enc_keep_prob)
 
