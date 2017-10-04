@@ -13,10 +13,10 @@ python code/train.py --batch_size=64 --rnn_state_size=150 --dropout=0.6
 
 Note:
 
-- To track the 300 dimensional word vectors I used [git lfs](https://git-lfs.github.com/). You will need [git lfs](https://git-lfs.github.com/) to download them.
+- You will need the [tqdm package](https://pypi.python.org/pypi/tqdm) to run the code
+- To track the 300 dimensional word vectors I used [git lfs](https://git-lfs.github.com/). You will need [git lfs](https://git-lfs.github.com/) to download them. If you just want to use the 100 dimensional word vectors, you don't need it.
 
 TODO:
 
 - The hyperparameter search is not finished (e.g.: How much can using 300 dimensional word vectors improve performance compared to 100 dimensional word vectors?)
-- LSTMs instead of GRUs should slightly enhance performance. 
-- Sentinel vectors need to be implemented.
+- Check influence of LSTM vs GRU, and influence of sentinels

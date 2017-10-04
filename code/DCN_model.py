@@ -50,12 +50,16 @@ class DCN_qa_model(Qa_model):
                                                          time_major=False)
 
         Qprime = q_outputs
+        q_senti = tf.get_variable("q_senti0", (rnn_size,), dtype=tf.float32)
+        q_senti = tf.tile(q_senti, tf.shape(Qprime)[0:1])
+        q_senti = tf.reshape(q_senti, (-1, 1, tf.shape(Qprime)[2]))
+        Qprime = tf.concat([Qprime, q_senti], axis=1)
         Qprime = tf.transpose(Qprime, [0, 2, 1], name="Qprime")
 
         # add tanh layer to go from Qprime to Q
-        WQ = tf.get_variable("WQ", (self.max_q_length, self.max_q_length),
+        WQ = tf.get_variable("WQ", (self.max_q_length + 1, self.max_q_length + 1),
                              initializer=tf.contrib.layers.xavier_initializer())
-        bQ = tf.get_variable("bQ_Bias", shape=(rnn_size, self.max_q_length),
+        bQ = tf.get_variable("bQ_Bias", shape=(rnn_size, self.max_q_length + 1),
                              initializer=tf.contrib.layers.xavier_initializer())
         Q = tf.einsum('ijk,kl->ijl', Qprime, WQ)
         Q = tf.nn.tanh(Q + bQ, name="Q")
@@ -70,6 +74,10 @@ class DCN_qa_model(Qa_model):
                                                          time_major=False)
 
         D = c_outputs
+        c_senti = tf.get_variable("c_senti0", (rnn_size,), dtype=tf.float32)
+        c_senti = tf.tile(c_senti, tf.shape(D)[0:1])
+        c_senti = tf.reshape(c_senti, (-1, 1, tf.shape(D)[2]))
+        D = tf.concat([D, c_senti], axis=1)
         D = tf.transpose(D, [0, 2, 1])
         L = tf.einsum('ijk,ijl->ikl', D, Q)
         AQ = tf.nn.softmax(L)
@@ -140,6 +148,12 @@ class DCN_qa_model(Qa_model):
             return func
 
         float_mask = tf.cast(self.c_mask_placeholder, dtype=tf.float32)
+        neg = tf.constant([0], dtype=tf.float32)
+        neg = tf.tile(neg, [tf.shape(float_mask)[0]])
+        neg = tf.reshape(neg, (tf.shape(float_mask)[0], 1))
+        float_mask = tf.concat([float_mask, neg], axis=1)
+        labels_S = tf.concat([self.labels_placeholderS, tf.cast(neg, tf.int32)], axis=1)
+        labels_E = tf.concat([self.labels_placeholderE, tf.cast(neg, tf.int32)], axis=1)
         dim = self.FLAGS.rnn_state_size
 
         # initialize us and ue as first word in context
@@ -192,18 +206,18 @@ class DCN_qa_model(Qa_model):
                 betas.append(beta)
 
         if cumulative_loss:
-            losses_alpha = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=a) for a in
+            losses_alpha = [tf.nn.softmax_cross_entropy_with_logits(labels=labels_S, logits=a) for a in
                             alphas]
             losses_alpha = [tf.reduce_mean(x) for x in losses_alpha]
-            losses_beta = [tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=b) for b in
+            losses_beta = [tf.nn.softmax_cross_entropy_with_logits(labels=labels_E, logits=b) for b in
                            betas]
             losses_beta = [tf.reduce_mean(x) for x in losses_beta]
 
             loss = tf.reduce_sum([losses_alpha, losses_beta])
         else:
-            cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderS, logits=alpha,
+            cross_entropy_start = tf.nn.softmax_cross_entropy_with_logits(labels=labels_S, logits=alpha,
                                                                           name="cross_entropy_start")
-            cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholderE, logits=beta,
+            cross_entropy_end = tf.nn.softmax_cross_entropy_with_logits(labels=labels_E, logits=beta,
                                                                         name="cross_entropy_end")
             loss = tf.reduce_mean(cross_entropy_start) + tf.reduce_mean(cross_entropy_end)
 
