@@ -16,6 +16,7 @@ tf.app.flags.DEFINE_integer("word_vec_dim", 100, "Dimension of word vectors. Eit
 tf.app.flags.DEFINE_float("dropout", 0.6, "1-Fraction of units randomly dropped.")
 tf.app.flags.DEFINE_float("dropout_encoder", 0.7, "1-Fraction of units randomly dropped in the encoder.")
 tf.app.flags.DEFINE_float("l2_lambda", 0.01, "Hyperparameter for l2 regularization.")
+tf.app.flags.DEFINE_float("max_gradient_norm", 3.0, "Parameter for gradient clipping.")
 tf.app.flags.DEFINE_string("batch_permutation", "random",
                            "Choose whether training data is shuffled ('random'), ordered by length ('by_length'), "
                            "or kept in initial order ('None') for each epoch")

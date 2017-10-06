@@ -156,7 +156,7 @@ class Qa_model(object):
         variables = [output[1] for output in grads_and_vars]
         gradients = [output[0] for output in grads_and_vars]
 
-        # gradients = tf.clip_by_global_norm(gradients, clip_norm=self.FLAGS.max_gradient_norm)[0]
+        gradients = tf.clip_by_global_norm(gradients, clip_norm=self.FLAGS.max_gradient_norm)[0]
         global_grad_norm = tf.global_norm(gradients)
         grads_and_vars = [(gradients[i], variables[i]) for i in range(len(gradients))]
 
