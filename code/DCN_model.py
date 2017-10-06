@@ -6,9 +6,8 @@ from abstract_model import Qa_model
 
 class DCN_qa_model(Qa_model):
     """This is an implementation of the Dynamic Coattention Network model (https://arxiv.org/abs/1611.01604) for 
-    question answering.    
-    Right now, a slightly simplified DCN encoder is implemented, which uses GRUs instead of LSTMs and doesn't use 
-    sentinel vectors yet.
+    question answering.
+    Instead of LSTMs, this implementation uses GRUs.
 
     The DCN_qa_model class is derived from the class Qa_model. Read the comment under "class Qa_model" in 
     abstract_model.py to get a general idea of the model framework. 
