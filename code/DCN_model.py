@@ -23,7 +23,7 @@ class DCN_qa_model(Qa_model):
 
     def encode(self, apply_dropout=False):
         """Coattention context encoder as introduced in https://arxiv.org/abs/1611.01604 
-        Simplification: Use GRUs instead of LSTMs. Do not use sentinel vectors. """
+        Uses GRUs instead of LSTMs. """
 
         # Each word is represented by a glove word vector (https://nlp.stanford.edu/projects/glove/)
         self.WEM = tf.get_variable(name="WordEmbeddingMatrix", initializer=tf.constant(self.WordEmbeddingMatrix),
