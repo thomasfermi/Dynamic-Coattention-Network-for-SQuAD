@@ -14,7 +14,7 @@ python code/train.py --rnn_state_size=150
 Note:
 
 - You will need the [tqdm package](https://pypi.python.org/pypi/tqdm) to run the code
-- To track the 300 dimensional word vectors I used [git lfs](https://git-lfs.github.com/). You will need to have [git lfs](https://git-lfs.github.com/) installed to download them. However, if you just want to use the 100 dimensional word vectors, you don't need it.
+- Right now the project is on ice, due to the high costs for training on AWS instances. I might continue the project once I get a proper graphics card.
 
 TODO:
 
