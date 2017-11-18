@@ -3,10 +3,11 @@ import tensorflow as tf
 from tqdm import trange
 import logging
 import matplotlib as mpl
+from collections import Counter
 
 mpl.use('Agg')  # can run on machine without display
 import matplotlib.pyplot as plt
-import os
+import os, re, string
 
 
 class Qa_model(object):
@@ -40,8 +41,8 @@ class Qa_model(object):
         self.FLAGS = FLAGS
         logging.getLogger().setLevel(logging.INFO)
 
-        self.unit_tests()
         self.load_and_preprocess_data()
+        self.unit_tests()
         self.build_model()
 
     def add_prediction_and_loss(self):
@@ -91,6 +92,10 @@ class Qa_model(object):
         desired numerical shape."""
 
         logging.info("Data preparation. This can take some seconds...")
+        # load vocab
+        with open(self.FLAGS.data_dir + "vocab.dat", "r") as f:
+            self.vocab = f.readlines()
+        self.vocab = [x[:-1] for x in self.vocab]
         # load word embedding
         if self.FLAGS.word_vec_dim == 300:
             self.WordEmbeddingMatrix = np.load(self.FLAGS.data_dir + "glove.trimmed.300.npz")['glove']
@@ -117,6 +122,7 @@ class Qa_model(object):
                                                     null_wordvec_index)
         self.Xval_q, self.Xval_q_mask = self.read_and_pad(self.FLAGS.data_dir + "val.ids.question", self.max_q_length,
                                                           null_wordvec_index)
+
         logging.info("End data preparation.")
 
     ####################################################################################################################
@@ -178,7 +184,44 @@ class Qa_model(object):
     ####################################################################################################################
     ######################## Evaluation metrics and plotting (of those metrics) ########################################
     ####################################################################################################################
+    def squad_normalize_answer(self, s):
+        """ Lower text and remove punctuation, articles and extra whitespace.
+        Method copied from the SQuAD Leaderboard: https://rajpurkar.github.io/SQuAD-explorer/  """
+
+        def remove_articles(text):
+            return re.sub(r'\b(a|an|the)\b', ' ', text)
+
+        def white_space_fix(text):
+            return ' '.join(text.split())
+
+        def remove_punc(text):
+            exclude = set(string.punctuation)
+            return ''.join(ch for ch in text if ch not in exclude)
+
+        def lower(text):
+            return text.lower()
+
+        return white_space_fix(remove_articles(remove_punc(lower(s))))
+
+    def squad_f1_score(self, prediction, ground_truth):
+        """Method copied from the SQuAD Leaderboard: https://rajpurkar.github.io/SQuAD-explorer/"""
+        prediction_tokens = self.squad_normalize_answer(prediction).split()
+        ground_truth_tokens = self.squad_normalize_answer(ground_truth).split()
+        common = Counter(prediction_tokens) & Counter(ground_truth_tokens)
+        num_same = sum(common.values())
+        if num_same == 0:
+            return 0
+        precision = 1.0 * num_same / len(prediction_tokens)
+        recall = 1.0 * num_same / len(ground_truth_tokens)
+        f1 = (2 * precision * recall) / (precision + recall)
+        return f1
+
+    def squad_exact_match_score(self, prediction, ground_truth):
+        """Method copied from the SQuAD Leaderboard: https://rajpurkar.github.io/SQuAD-explorer/"""
+        return (self.squad_normalize_answer(prediction) == self.squad_normalize_answer(ground_truth))
+
     def get_f1(self, yS, yE, ypS, ypE):
+        """My own, more strict f1 metric"""
         f1_tot = 0.0
         for i in range(len(yS)):
             y = np.zeros(self.max_c_length)
@@ -201,6 +244,7 @@ class Qa_model(object):
         return f1_tot
 
     def get_exact_match(self, yS, yE, ypS, ypE):
+        """My own, more strict EM metric"""
         count = 0
         for i in range(len(yS)):
             s, e = np.argmax(yS[i]), np.argmax(yE[i])
@@ -212,7 +256,40 @@ class Qa_model(object):
         match_fraction = count / float(len(yS))
         return match_fraction
 
-    def plot_metrics(self, index_epoch, losses, val_losses, EMs, val_Ems, F1s, val_F1s, grad_norms):
+    def index_list_to_string(self, index_list):
+        """Helper function. Converts a list of word indices to a string of words"""
+        res = [self.vocab[index] for index in index_list]
+        return ' '.join(res)
+
+    def get_exact_match_from_tokens(self, yS, yE, ypS, ypE, batch_Xc):
+        """This function doesn't compare the indices, but the tokens behind the indices. This is a bit more forgiving
+        and it is the metric applied on the SQuAD leaderboard"""
+        em = 0
+        for i in range(len(yS)):
+            s, e = np.argmax(yS[i]), np.argmax(yE[i])
+            sp, ep = ypS[i], ypE[i]
+            if sp > ep:
+                sp, ep = ep, sp  # allow flipping between start and end
+            ground_truth = self.index_list_to_string(batch_Xc[i][s:e + 1])
+            prediction = self.index_list_to_string(batch_Xc[i][sp:ep + 1])
+            em += self.squad_exact_match_score(prediction, ground_truth)
+        return em / float(len(yS))
+
+    def get_f1_from_tokens(self, yS, yE, ypS, ypE, batch_Xc):
+        """This function doesn't compare the indices, but the tokens behind the indices. This is a bit more forgiving
+        and it is the metric applied on the SQuAD leaderboard."""
+        f1 = 0
+        for i in range(len(yS)):
+            s, e = np.argmax(yS[i]), np.argmax(yE[i])
+            sp, ep = ypS[i], ypE[i]
+            if sp > ep:
+                sp, ep = ep, sp  # allow flipping between start and end
+            ground_truth = self.index_list_to_string(batch_Xc[i][s:e + 1])
+            prediction = self.index_list_to_string(batch_Xc[i][sp:ep + 1])
+            f1 += self.squad_f1_score(prediction, ground_truth)
+        return f1 / float(len(yS))
+
+    def plot_metrics(self, prefix, index_epoch, losses, val_losses, EMs, val_Ems, F1s, val_F1s, grad_norms):
         n_data_points = len(losses)
         epoch_axis = np.arange(n_data_points, dtype=np.float32) * index_epoch / float(n_data_points)
         epoch_axis_val = list(range(index_epoch + 1))
@@ -223,7 +300,7 @@ class Qa_model(object):
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.legend()
-        plt.savefig(self.FLAGS.figure_directory + "losses_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory + prefix + "losses_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, EMs, label="training")
@@ -231,7 +308,7 @@ class Qa_model(object):
         plt.xlabel("epoch")
         plt.ylabel("EM")
         plt.legend()
-        plt.savefig(self.FLAGS.figure_directory + "EMs_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory + prefix + "EMs_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, F1s, label="training")
@@ -239,13 +316,13 @@ class Qa_model(object):
         plt.xlabel("epoch")
         plt.ylabel("F1")
         plt.legend()
-        plt.savefig(self.FLAGS.figure_directory + "f1s_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory + prefix + "f1s_over_time.png")
         plt.close()
 
         plt.plot(epoch_axis, grad_norms)
         plt.xlabel("epoch")
         plt.ylabel("gradient_norm")
-        plt.savefig(self.FLAGS.figure_directory + "training_grad_norms_over_time.png")
+        plt.savefig(self.FLAGS.figure_directory + prefix + "training_grad_norms_over_time.png")
         plt.close()
 
     ####################################################################################################################
@@ -336,11 +413,19 @@ class Qa_model(object):
         yS = np.array([[0, 0, 1, 0, 0], [1, 0, 0, 0, 0], [0, 0, 0, 0, 1]])
         yE = np.array([[0, 0, 0, 1, 0], [0, 0, 1, 0, 0], [0, 0, 0, 0, 1]])
         ypS = np.array([2, 0, 0], dtype=np.int32)
-        ypE = np.array([3, 0, 4])
+        ypE = np.array([3, 0, 3])
         assert np.isclose(self.get_exact_match(yS, yE, ypS, ypE), 0.33, atol=0.01)
         logging.debug("get_exact_match passed the test")
-        assert np.isclose(self.get_f1(yS, yE, ypS, ypE), (1 + 1 / 2. + 1 / 3.) / 3., atol=0.01)
+        assert np.isclose(self.get_f1(yS, yE, ypS, ypE), (1 + 1 / 2. + 0.) / 3., atol=0.01)
         logging.debug("get_f1 passed the test")
+        # Test the more foregiving metrics
+        batch_Xc = [[71, 72, 73, 74, 75], [81, 82, 83, 84, 85], [55, 52, 53, 54, 55]]
+        assert np.isclose(self.get_exact_match_from_tokens(yS, yE, ypS, ypE, batch_Xc), 0.33, atol=0.01)
+        logging.debug("get_exact_match_from_tokens passed the test")
+        assert np.isclose(self.get_f1_from_tokens(yS, yE, ypS, ypE, batch_Xc), (1 + 1 / 2. + 0.5 / 1.25) / 3.,
+                          atol=0.01)
+        logging.debug("get_f1_from_tokens passed the test")
+        assert False
 
     ####################################################################################################################
     ######################## Training ##################################################################################
@@ -356,10 +441,12 @@ class Qa_model(object):
 
         global_losses, global_EMs, global_f1s, global_grad_norms = [], [], [], []  # global means "over several epochs"
         EMs_val, F1s_val, loss_val = [], [], []  # exact_match- and F1-metrics as well as loss on the validation data
+        SQ_global_EMs, SQ_global_f1s, SQ_EMs_val, SQ_F1s_val = [], [], [], []  # corresponding squad metrics
 
         for index_epoch in range(1, epochs + 1):
             progbar = trange(int(n_samples / batch_size))
             losses, ems, f1s, grad_norms = [], [], [], []
+            sq_ems, sq_f1s = [], []
             self.initialize_batch_processing(permutation=self.FLAGS.batch_permutation, n_samples=n_samples)
 
             ############### train for one epoch ###############
@@ -374,17 +461,22 @@ class Qa_model(object):
                     feed_dict=feed_dict)
                 ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE))
                 f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE))
+                sq_ems.append(self.get_exact_match_from_tokens(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
+                sq_f1s.append(self.get_f1_from_tokens(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
                 losses.append(current_loss)
                 grad_norms.append(grad_norm)
 
                 if len(losses) >= 20:
-                    progbar.set_postfix({'loss': np.mean(losses), 'EM': np.mean(ems), 'f1': np.mean(f1s),
-                                         'grad_norm': np.mean(grad_norms), 'lr': curr_lr})
+                    progbar.set_postfix({'loss': np.mean(losses), 'EM': np.mean(ems), 'SQ_EM': np.means(sq_ems), 'F1':
+                        np.mean(f1s), 'SQ_F1': np.mean(sq_f1s), 'grad_norm': np.mean(grad_norms), 'lr': curr_lr})
                     global_losses.append(np.mean(losses))
                     global_EMs.append(np.mean(ems))
                     global_f1s.append(np.mean(f1s))
+                    SQ_global_EMs.append(np.means(sq_ems))
+                    SQ_global_f1s.append(np.means(sq_f1s))
                     global_grad_norms.append(np.mean(grad_norms))
                     losses, ems, f1s, grad_norms = [], [], [], []
+                    sq_ems, sq_f1s = [], []
 
             ############### After an epoch: evaluate on validation set ###############
             logging.info("Epoch {} finished. Doing evaluation on validation set...".format(index_epoch))
@@ -392,6 +484,7 @@ class Qa_model(object):
                                              n_samples=len(self.yvalE))
             val_batch_size = batch_size  # can be a multiple of batch_size, but be sure to not run out of memory
             losses, ems, f1s = [], [], []
+            sq_ems, sq_f1s = [], []
             for _ in range(int(len(self.yvalE) / val_batch_size)):
                 batch_xc, batch_xc_mask, batch_xq, batch_xq_mask, batch_yS, batch_yE = self.next_batch(
                     batch_size=val_batch_size, permutation_after_epoch=self.FLAGS.batch_permutation, val=True)
@@ -401,17 +494,27 @@ class Qa_model(object):
                                                                   feed_dict=feed_dict)
                 ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE))
                 f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE))
+                sq_ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
+                sq_f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
                 losses.append(current_loss)
 
             loss_on_validation, EM_val, F1_val = np.mean(losses), np.mean(ems), np.mean(f1s)
+            SQ_F1_val, SQ_EM_val = np.mean(sq_f1s), np.mean(sq_ems)
             logging.info("loss_val={}".format(loss_on_validation))
             logging.info("EM_val={}".format(EM_val))
             logging.info("F1_val={}".format(F1_val))
+            logging.info("SQ_EM_val={}".format(SQ_EM_val))
+            logging.info("SQ_F1_val={}".format(SQ_F1_val))
             EMs_val.append(EM_val)
             F1s_val.append(F1_val)
+            SQ_EMs_val.append(SQ_EM_val)
+            SQ_F1s_val.append(SQ_F1_val)
             loss_val.append(loss_on_validation)
 
             ############### do some plotting ###############
             # if index_epoch > 1:
-            self.plot_metrics(index_epoch, global_losses, loss_val, global_EMs, EMs_val, global_f1s, F1s_val,
+            self.plot_metrics("strict_", index_epoch, global_losses, loss_val, global_EMs, EMs_val, global_f1s, F1s_val,
                               global_grad_norms)
+
+            self.plot_metrics("SQuAD_", index_epoch, global_losses, loss_val, SQ_global_EMs, SQ_EMs_val, SQ_global_f1s,
+                              SQ_F1s_val, global_grad_norms)
