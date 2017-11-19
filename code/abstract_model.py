@@ -425,7 +425,6 @@ class Qa_model(object):
         assert np.isclose(self.get_f1_from_tokens(yS, yE, ypS, ypE, batch_Xc), (1 + 1 / 2. + 0.5 / 1.25) / 3.,
                           atol=0.01)
         logging.debug("get_f1_from_tokens passed the test")
-        assert False
 
     ####################################################################################################################
     ######################## Training ##################################################################################
@@ -467,13 +466,13 @@ class Qa_model(object):
                 grad_norms.append(grad_norm)
 
                 if len(losses) >= 20:
-                    progbar.set_postfix({'loss': np.mean(losses), 'EM': np.mean(ems), 'SQ_EM': np.means(sq_ems), 'F1':
+                    progbar.set_postfix({'loss': np.mean(losses), 'EM': np.mean(ems), 'SQ_EM': np.mean(sq_ems), 'F1':
                         np.mean(f1s), 'SQ_F1': np.mean(sq_f1s), 'grad_norm': np.mean(grad_norms), 'lr': curr_lr})
                     global_losses.append(np.mean(losses))
                     global_EMs.append(np.mean(ems))
                     global_f1s.append(np.mean(f1s))
-                    SQ_global_EMs.append(np.means(sq_ems))
-                    SQ_global_f1s.append(np.means(sq_f1s))
+                    SQ_global_EMs.append(np.mean(sq_ems))
+                    SQ_global_f1s.append(np.mean(sq_f1s))
                     global_grad_norms.append(np.mean(grad_norms))
                     losses, ems, f1s, grad_norms = [], [], [], []
                     sq_ems, sq_f1s = [], []
@@ -494,8 +493,8 @@ class Qa_model(object):
                                                                   feed_dict=feed_dict)
                 ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE))
                 f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE))
-                sq_ems.append(self.get_exact_match(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
-                sq_f1s.append(self.get_f1(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
+                sq_ems.append(self.get_exact_match_from_tokens(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
+                sq_f1s.append(self.get_f1_from_tokens(batch_yS, batch_yE, predictionS, predictionE, batch_xc))
                 losses.append(current_loss)
 
             loss_on_validation, EM_val, F1_val = np.mean(losses), np.mean(ems), np.mean(f1s)
