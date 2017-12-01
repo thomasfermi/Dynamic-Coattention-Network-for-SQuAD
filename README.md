@@ -6,7 +6,7 @@ If you just want to have a look at the DCN implementation check out [DCN\_model.
 
 To implement the model I had to explore some tensorflow functions like tf.gather\_nd and tf.map\_fn. I did my experiments with these functions on toy data in [this notebook](Experimentation_Notebooks/toy_data_examples_for_tile_map_fn_gather_nd_etc.ipynb) in the Experimentation\_Notebooks folder.
 
-The best result so far is 43% EM (exact match) and 60% F1 score on the validation set. Training was started via
+The best result so far is 48% EM (exact match) and 64% F1 score on the validation set. Training was started via
 ```bash
 python code/train.py --rnn_state_size=150
 ```
